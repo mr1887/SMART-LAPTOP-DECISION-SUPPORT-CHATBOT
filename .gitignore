@@ -1,0 +1,36 @@
+# --- 1. Môi trường ảo (Virtual Environments) ---
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- 2. Thư mục rác của Python & Cache ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# --- 3. Môi trường lập trình (IDEs) ---
+.vscode/
+.idea/
+
+# --- 4. Biến môi trường chứa thông tin bảo mật (API Key, DB Pass) ---
+.env
+
+# --- 5. Data & Datasets (Dữ liệu nặng) ---
+data/
+*.csv
+*.xlsx
+
+# --- 6. Machine Learning Models & Weights ---
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# --- 7. Jupyter Notebook Checkpoints ---
+.ipynb_checkpoints/

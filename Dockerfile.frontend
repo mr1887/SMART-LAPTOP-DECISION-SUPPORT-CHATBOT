@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Cài đặt thư viện cần thiết cho Streamlit frontend
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir streamlit requests
+
+# Copy mã nguồn frontend
+COPY frontend ./frontend
+
+EXPOSE 8501
+
+# Đặt biến môi trường mặc định trỏ tới backend service trong Docker network
+ENV BACKEND_URL=http://backend:8000
+
+# Khởi chạy Streamlit
+CMD ["streamlit", "run", "frontend/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
