@@ -4,7 +4,7 @@
 
 Trợ lý AI tư vấn chọn laptop, kết hợp khả năng hiểu ngôn ngữ tự nhiên của **Gemini** với độ chính xác tuyệt đối của **tối ưu hóa toán học (Gurobi/PuLP)** — đảm bảo mọi gợi ý luôn tuân thủ 100% ràng buộc về ngân sách và cấu hình, thay vì "đoán" như chatbot AI thông thường.
 
-Dự án xây dựng cho chương trình **AI Riser Vietnam 2026** (GDG Vietnam) — `#BuildwithGoogleAI`
+Link dự án: https://smart-laptop-chatbot-61261939576.asia-southeast1.run.app/
 
 ---
 
