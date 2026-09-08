@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Laptop Decision Support | Trợ lý AI Tư vấn Chọn Laptop</title>
+
+  <!-- Google Font: Figtree -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Marked.js for Markdown parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- SIDEBAR BỘ LỌC TIÊU CHÍ -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-logo">
+          <div class="logo-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="2" y1="20" x2="22" y2="20"></line>
+            </svg>
+          </div>
+          <h2>Laptop Support AI</h2>
+        </div>
+        <p class="brand-subtitle">Hệ thống trợ giúp quyết định mua laptop</p>
+      </div>
+
+      <div class="filter-section">
+        <h3>Bộ lọc tiêu chí nhanh</h3>
+
+        <div class="filter-group">
+          <label for="price-range">Ngân sách tối đa: <span id="price-val">25 triệu</span> VNĐ</label>
+          <input type="range" id="price-range" min="5" max="60" value="25" step="1" />
+        </div>
+
+        <div class="filter-group">
+          <label for="gpu-type">Loại Card đồ họa (GPU)</label>
+          <select id="gpu-type">
+            <option value="any">Tùy chọn (Tất cả)</option>
+            <option value="discrete">Bắt buộc Card rời (Gaming / Đồ họa)</option>
+            <option value="integrated">Chỉ Card tích hợp (Văn phòng)</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="gpu-keyword">Dòng GPU cụ thể (tùy chọn)</label>
+          <input type="text" id="gpu-keyword" placeholder="VD: RTX 4060, RTX 3050, Apple M4..." />
+        </div>
+
+        <div class="filter-group">
+          <label>Nhu cầu sử dụng chính</label>
+          <div class="checkbox-tags">
+            <label class="tag-checkbox"><input type="checkbox" value="is_programming_friendly" /> Lập trình / IT</label>
+            <label class="tag-checkbox"><input type="checkbox" value="is_graphic_friendly" /> Đồ họa / Thiết kế</label>
+            <label class="tag-checkbox"><input type="checkbox" value="is_office_friendly" /> Văn phòng / Học tập</label>
+            <label class="tag-checkbox"><input type="checkbox" value="is_gaming_friendly" /> Gaming / Giải trí</label>
+          </div>
+        </div>
+
+        <div class="filter-actions">
+          <button id="btn-apply-filter" class="btn btn-primary">Tìm theo bộ lọc này</button>
+          <button id="btn-reset-filter" class="btn btn-outline">Đặt lại từ đầu</button>
+        </div>
+      </div>
+
+      <div class="active-constraints-box" id="active-constraints-container" style="display:none;">
+        <span class="box-title">Tiêu chí đang áp dụng:</span>
+        <div id="active-constraints-list" class="constraints-badges"></div>
+      </div>
+    </aside>
+
+    <!-- KHU VỰC TRÒ CHUYỆN CHÍNH -->
+    <main class="chat-main">
+      <header class="chat-header">
+        <div class="header-info">
+          <h1>Trợ lý AI Tư vấn Chọn Laptop</h1>
+          <span class="status-indicator">
+            <span class="dot"></span>
+            Kết nối Tối ưu Toán học BIP &amp; Gemini Grounding &amp; Google Cloud Voice
+          </span>
+        </div>
+
+        <div class="header-tools">
+          <label class="toggle-voice" title="Tự động phát giọng đọc câu trả lời">
+            <input type="checkbox" id="toggle-voice-autoplay" />
+            <span class="toggle-label">Tự động đọc giọng nói (Cloud TTS)</span>
+          </label>
+        </div>
+      </header>
+
+      <!-- DÒNG LỊCH SỬ TIN NHẮN -->
+      <div class="messages-container" id="messages-container">
+        <div class="message-wrapper assistant">
+          <div class="avatar">AI</div>
+          <div class="message-bubble">
+            Chào bạn! Mình là Trợ lý AI chuyên tư vấn lựa chọn laptop tối ưu.<br/><br/>
+            Bạn có thể chia sẻ khoảng ngân sách và nhu cầu sử dụng (bằng tin nhắn hoặc bấm <strong>Microphone</strong> để nói trực tiếp), hoặc dùng bộ lọc bên trái để mình tìm máy phù hợp nhất nhé!
+          </div>
+        </div>
+      </div>
+
+      <!-- SUGGESTION CHIPS -->
+      <div class="suggestion-chips">
+        <button class="chip" data-msg="Tôi muốn tìm laptop gaming tầm 25 triệu có RTX 4060">Laptop Gaming 25tr RTX 4060</button>
+        <button class="chip" data-msg="Tư vấn laptop làm đồ họa dưới 30 triệu">Laptop Đồ họa dưới 30tr</button>
+        <button class="chip" data-msg="Tìm máy lập trình CNTT mỏng nhẹ tầm 20tr">Laptop Lập trình IT 20tr</button>
+        <button class="chip" data-msg="Tư vấn laptop văn phòng giá rẻ tầm 15tr">Laptop Văn phòng 15tr</button>
+      </div>
+
+      <!-- THANH TRẠNG THÁI GHI ÂM MICROPHONE -->
+      <div class="recording-status-bar" id="recording-status-bar" style="display: none;">
+        <div class="recording-pulse-dot"></div>
+        <span id="recording-status-text">Đang lắng nghe giọng nói của bạn... Hãy nói câu hỏi và nhấn lại nút Mic để hoàn tất.</span>
+        <button id="btn-cancel-recording" class="btn-cancel-recording" title="Hủy ghi âm">Hủy</button>
+      </div>
+
+      <!-- KHUNG NHẬP CÂU HỎI -->
+      <div class="input-container">
+        <textarea id="chat-input" placeholder="Nhập câu hỏi hoặc nhấn nút Micro để nói (VD: 'Tìm máy 20tr chạy mượt Photoshop')..." rows="1"></textarea>
+        
+        <!-- Nút Microphone (Speech-to-Text) -->
+        <button id="btn-mic" class="btn btn-mic" title="Nói câu hỏi qua Micro (Google Cloud STT)">
+          <svg id="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+          </svg>
+        </button>
+
+        <button id="btn-send" class="btn btn-send">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+          <span>Gửi</span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
