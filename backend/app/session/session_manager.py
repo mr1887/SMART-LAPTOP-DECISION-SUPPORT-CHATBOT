@@ -1,9 +1,8 @@
 """
 Tầng 0 - Session Context Manager.
-MVP: lưu trong RAM (dict). Khi triển khai nhiều instance backend hoặc cần
-bền hơn 1 phiên chạy, thay _STORE bằng Redis (đã có sẵn service redis
-trong docker-compose.yml).
+Quản lý trạng thái ngữ cảnh hội thoại đa lượt (Multi-turn Context).
 """
+
 from typing import Optional
 
 _STORE: dict = {}  # session_id -> {"constraints": {...}, "seed_laptop_id": ..., ...}
@@ -20,21 +19,35 @@ def save_state(session_id: str, state: dict) -> None:
 
 
 def merge_constraints(old_constraints: dict, new_delta: dict) -> dict:
-    """Trộn ràng buộc mới (delta, từ Regex hoặc từ nút bấm UI) vào ràng
-    buộc cũ đang lưu trong session.
+    """
+    Trộn ràng buộc mới (delta từ NLP hoặc UI) vào ràng buộc cũ đang lưu trong session.
 
     Quy tắc:
-    - value == "REMOVE"  -> xóa field đó khỏi trạng thái (khách nói "bỏ...")
-    - value is not None  -> ghi đè lên giá trị cũ (khách đổi/thêm ràng buộc)
-    - value is None       -> giữ nguyên giá trị cũ (field này không được
-                              nhắc tới trong lượt chat hiện tại)
+    - value == "REMOVE"  -> xóa field đó khỏi trạng thái
+    - value is not None  -> ghi đè lên giá trị cũ
+    - value is None      -> giữ nguyên giá trị cũ
+    - Nếu khách chuyển đổi nhu cầu chính (ví dụ từ gaming sang văn phòng) mà câu mới không nhắc đến GPU rời / từ khóa GPU cũ,
+      tự động làm sạch các ràng buộc GPU cũ để tránh xung đột tiêu chí.
     """
     merged = old_constraints.copy()
+
+    # Kiểm tra nếu đổi nhu cầu chính
+    new_tags = new_delta.get("required_tags")
+    old_tags = old_constraints.get("required_tags")
+    if new_tags and old_tags and set(new_tags) != set(old_tags):
+        # Nếu chuyển sang văn phòng / học tập thuần túy và lượt này không yêu cầu GPU cụ thể
+        if "is_office_friendly" in new_tags and "is_gaming_friendly" not in new_tags:
+            if new_delta.get("gpu_keyword") is None:
+                merged.pop("gpu_keyword", None)
+            if new_delta.get("require_discrete_gpu") is None:
+                merged.pop("require_discrete_gpu", None)
+
     for key, value in new_delta.items():
         if value == "REMOVE":
             merged.pop(key, None)
         elif value is not None:
             merged[key] = value
+
     return merged
 
 

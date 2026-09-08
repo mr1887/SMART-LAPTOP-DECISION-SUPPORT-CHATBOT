@@ -1,0 +1,23 @@
+# .gcloudignore
+.gcloudignore
+.git
+.gitignore
+
+# Python bytecode and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and temporary files
+.vscode/
+.idea/
+*.log
+.pytest_cache/
+.ipynb_checkpoints/

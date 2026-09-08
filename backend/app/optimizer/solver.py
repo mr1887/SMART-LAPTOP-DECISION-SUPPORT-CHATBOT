@@ -1,29 +1,23 @@
 """
 Tầng 3 - Decision Support System (Gurobi/PuLP Optimizer).
 
-Nhận: bộ ràng buộc (từ Tầng 1 Regex) + AI_Score cho từng laptop (từ Tầng 2
+Nhận: bộ ràng buộc (từ Tầng 1 NLP) + AI_Score cho từng laptop (từ Tầng 2
 LightGBM), trả về 1 laptop tối ưu tuân thủ 100% ràng buộc cứng, hoặc giải
-thích rõ vì sao Infeasible kèm phương án gần đạt chuẩn nhất.
+quyết bài toán vô nghiệm bằng phương pháp nới lỏng ràng buộc Soft Constraint (BIP Relaxation)
+để luôn tìm ra nghiệm tiệm cận tối ưu nhất kèm giải thích chi tiết mức vi phạm.
 
-Backend mặc định: PuLP + CBC solver (miễn phí, không cần license).
-Nếu máy có cài gurobipy VÀ có license hợp lệ, có thể đổi backend="gurobi"
-để dùng Gurobi thật (xem hàm _solve_gurobi ở cuối file) - giữ 2 backend
-sau cùng 1 interface solve() để không phụ thuộc vào việc có license hay
-không khi demo/báo cáo.
-
-Cách dùng độc lập (test nhanh không cần chạy cả app):
-    python solver.py --scored data/processed/laptop_dataset_scored.csv
+Backend mặc định: Gurobi (nếu có license) hoặc PuLP + CBC solver (miễn phí).
 """
 
 import argparse
 import json
+import os
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, List, Dict, Any
 
 import pandas as pd
 import pulp
-
-import os
 
 try:
     import gurobipy as gp
@@ -34,479 +28,494 @@ except ImportError:
 
 
 # ---------- Xác thực Gurobi ----------
-# CÓ 2 CÁCH license được nhận diện, tùy vào máy bạn đã setup thế nào:
-#
-# Cách 1 (đơn giản, TỰ ĐỘNG): nếu bạn đã chạy `grbgetkey <license-key>`
-# lúc cài đặt, Gurobi đã tự tải sẵn file gurobi.lic chứa WLSACCESSID/
-# WLSSECRET/LICENSEID vào thư mục mặc định trên máy. Lúc này chỉ cần gọi
-# gp.Model() TRƠN, không cần khai báo gì - Gurobi tự tìm thấy file đó.
-# Đây là cách hầu hết người dùng WLS trên máy cá nhân gặp phải.
-#
-# Cách 2 (dự phòng, môi trường không có file sẵn - VD Docker container
-# mới chưa từng chạy grbgetkey): phải khai báo credentials tường minh
-# qua gp.Env(params=...), đọc từ biến môi trường GUROBI_WLSACCESSID/
-# GUROBI_WLSSECRET/GUROBI_LICENSEID (xem .env.example).
-#
-# Code dưới đây THỬ CÁCH 1 TRƯỚC (đúng như Gurobi hoạt động mặc định),
-# chỉ rơi xuống Cách 2 nếu Cách 1 báo lỗi liên quan tới license.
-_GUROBI_ENV = None  # cache Env nếu phải dùng Cách 2, tránh xác thực lại mỗi lần
+_GUROBI_ENV = None
 
 
 def _create_gurobi_model(name: str) -> "gp.Model":
-    """Tạo Gurobi Model - ưu tiên để Gurobi TỰ TÌM license file trên máy
-    (Cách 1), chỉ khai báo credentials tường minh (Cách 2) nếu Cách 1
-    thất bại. In rõ đang dùng cách nào để bạn biết máy mình thuộc dạng nào."""
+    """Tạo Gurobi Model - ưu tiên dò license tự động hoặc WLS params từ env."""
     global _GUROBI_ENV
 
     if _GUROBI_ENV is not None:
         return gp.Model(name, env=_GUROBI_ENV)
 
     try:
-        # Cách 1: không truyền env gì cả - Gurobi tự dò file gurobi.lic
         model = gp.Model(name)
         return model
     except gp.GurobiError as e:
         license_related = "license" in str(e).lower() or "wls" in str(e).lower()
         if not license_related:
-            raise  # lỗi khác, không phải do thiếu license - không nên nuốt lỗi
+            raise
 
-        print(
-            f"Không tìm thấy license file tự động trên máy ({e}). "
-            f"Chuyển sang khai báo WLS credentials tường minh từ biến môi trường..."
-        )
         access_id = os.environ.get("GUROBI_WLSACCESSID")
         secret = os.environ.get("GUROBI_WLSSECRET")
         license_id = os.environ.get("GUROBI_LICENSEID")
 
-        missing = [
-            n for n, v in [("GUROBI_WLSACCESSID", access_id),
-                            ("GUROBI_WLSSECRET", secret),
-                            ("GUROBI_LICENSEID", license_id)] if not v
-        ]
-        if missing:
-            raise RuntimeError(
-                f"Gurobi không tự tìm được license trên máy, và cũng thiếu "
-                f"biến môi trường {missing} để xác thực thủ công.\n"
-                f"-> Cách sửa NHANH NHẤT (khuyến nghị): chạy lệnh sau trong "
-                f"terminal (chỉ cần làm 1 LẦN DUY NHẤT):\n"
-                f"     grbgetkey <license-key-của-bạn>\n"
-                f"   Sau đó gp.Model() sẽ tự động chạy được, không cần sửa "
-                f"code gì thêm.\n"
-                f"-> Hoặc nếu chạy trong Docker/môi trường không lưu được "
-                f"file: điền GUROBI_WLSACCESSID/GUROBI_WLSSECRET/"
-                f"GUROBI_LICENSEID vào file .env."
-            ) from e
+        if not (access_id and secret and license_id):
+            raise RuntimeError("Thiếu thông tin license Gurobi WLS.") from e
 
         _GUROBI_ENV = gp.Env(params={
             "WLSAccessID": access_id,
             "WLSSecret": secret,
             "LicenseID": int(license_id),
         })
-        print("Xác thực WLS bằng biến môi trường thành công.")
         return gp.Model(name, env=_GUROBI_ENV)
 
 
-# Trọng số phạt khi phải nới lỏng ràng buộc (Soft Constraint) - càng lớn
-# càng "ép" solver ưu tiên tuân thủ ràng buộc đó hơn là chọn AI_Score cao.
-# Đơn vị của mỗi lambda phải quy đổi tương đối so với thang AI_Score [0,1].
+# Trọng số phạt khi phải nới lỏng ràng buộc (Soft Constraint)
+# Chuẩn hóa theo thang AI_Score [0, 1]
 RELAX_PENALTY = {
-    "price": 1e-8,          # phạt theo VNĐ vượt ngân sách tối đa (max_price)
-    "min_price": 1e-8,      # phạt theo VNĐ thiếu so với ngân sách tối thiểu (min_price)
-    "weight": 0.3,           # phạt theo kg vượt cân nặng
-    "battery": 0.002,        # phạt theo phút thiếu pin
+    "price": 1e-7,          # phạt theo VNĐ vượt ngân sách tối đa (10M VNĐ = -1.0)
+    "min_price": 1e-7,      # phạt theo VNĐ thiếu so với ngân sách tối thiểu
+    "weight": 0.3,          # phạt theo kg vượt cân nặng
+    "battery": 0.002,       # phạt theo phút thiếu pin
+    "tag": 0.6,             # phạt nếu không đạt nhãn nhu cầu (office, gaming,...)
+    "gpu_discrete": 0.5,    # phạt nếu vi phạm yêu cầu card rời / tích hợp
+    "gpu_keyword": 0.5,     # phạt nếu không khớp đúng dòng GPU mong muốn
 }
 
 
 def _drop_unusable_rows(df: pd.DataFrame, constraints: dict) -> pd.DataFrame:
-    """Loại các laptop bị thiếu (NaN) đúng ở cột ràng buộc đang được áp dụng -
-    PuLP/Gurobi không xử lý được NaN trong hệ số ràng buộc. Chỉ laptop nào
-    có đủ dữ liệu cho MỌI ràng buộc đang bật mới được đưa vào solver."""
-    battery_col = "office_battery_minutes_final" if "office_battery_minutes_final" in df.columns else "office_battery_result_minutes"
-
-    required_cols = ["AI_Score"]
-    if constraints.get("max_price") is not None or constraints.get("min_price") is not None:
-        required_cols.append("price")
-    if constraints.get("max_weight") is not None:
-        required_cols.append("laptop_weight")
-    if constraints.get("min_battery") is not None:
-        required_cols.append(battery_col)
-
-    before = len(df)
-    df_clean = df.dropna(subset=required_cols)
-    dropped = before - len(df_clean)
-    if dropped > 0:
-        print(
-            f"Loại {dropped}/{before} laptop khỏi solver vì thiếu dữ liệu ở "
-            f"cột ràng buộc đang xét ({required_cols})."
-        )
-    return df_clean
+    """Loại các laptop bị thiếu (NaN) ở các cột bắt buộc tối thiểu (price, AI_Score)."""
+    required_cols = ["AI_Score", "price"]
+    clean_df = df.dropna(subset=[c for c in required_cols if c in df.columns])
+    return clean_df
 
 
-def _filter_by_tags(df: pd.DataFrame, required_tags: list[str]) -> tuple[pd.DataFrame, Optional[str]]:
-    """Lọc cứng theo nhãn nhu cầu (is_gaming_friendly...). Trả về dataframe
-    đã lọc + tên tag đầu tiên làm rỗng tập ứng viên (nếu có), để giải
-    thích rõ nguyên nhân Infeasible ngay từ bước này thay vì để solver
-    chạy trên tập rỗng."""
-    candidates = df.copy()
-    for tag in required_tags or []:
-        if tag not in candidates.columns:
-            continue
-        before = len(candidates)
-        candidates = candidates[candidates[tag] == True]  # noqa: E712
-        if len(candidates) == 0 and before > 0:
-            return candidates, tag
-    return candidates, None
+def _is_discrete_gpu(gpu_name: Any) -> bool:
+    """Xác định GPU có phải là card đồ họa rời (Discrete GPU) hay không."""
+    if not gpu_name or not isinstance(gpu_name, str):
+        return False
+    name_lower = gpu_name.lower()
+    if any(k in name_lower for k in ["tích hợp", "integrated", "adreno", "uhd", "iris", "intel graphics", "apple m"]):
+        return False
+    if any(k in name_lower for k in ["rtx", "gtx", "geforce", "nvidia", "radeon rx", "arc b", "discrete"]):
+        return True
+    return False
 
 
-def _diagnose_infeasible(df: pd.DataFrame, constraints: dict) -> dict:
-    """Chẩn đoán thủ công kiểu 'IIS' cho PuLP (PuLP không có computeIIS
-    sẵn như Gurobi) - kiểm tra TỪNG ràng buộc riêng lẻ xem có bao nhiêu
-    laptop thỏa mãn, để biết ràng buộc nào đang 'siết' quá chặt."""
-    diagnosis = {}
-
-    if constraints.get("max_price") is not None:
-        n_ok = (df["price"] <= constraints["max_price"]).sum()
-        diagnosis["max_price"] = f"{n_ok}/{len(df)} laptop trong ngân sách tối đa"
-
-    if constraints.get("min_price") is not None:
-        n_ok = (df["price"] >= constraints["min_price"]).sum()
-        diagnosis["min_price"] = f"{n_ok}/{len(df)} laptop đạt ngân sách tối thiểu"
-
-    if constraints.get("max_weight") is not None:
-        n_ok = (df["laptop_weight"] <= constraints["max_weight"]).sum()
-        diagnosis["max_weight"] = f"{n_ok}/{len(df)} laptop đủ nhẹ"
-
-    if constraints.get("min_battery") is not None:
-        battery_col = "office_battery_minutes_final" if "office_battery_minutes_final" in df.columns else "office_battery_result_minutes"
-        n_ok = (df[battery_col] >= constraints["min_battery"]).sum()
-        diagnosis["min_battery"] = f"{n_ok}/{len(df)} laptop đủ pin"
-
-    return diagnosis
+def _matches_gpu_keyword(gpu_name: Any, keyword: Optional[str]) -> bool:
+    """Kiểm tra GPU có khớp với từ khóa/dòng GPU yêu cầu hay không."""
+    if not keyword:
+        return True
+    if not gpu_name or not isinstance(gpu_name, str):
+        return False
+    kw_tokens = re.sub(r"\s+", " ", str(keyword).lower().strip()).split()
+    gpu_clean = re.sub(r"\s+", " ", str(gpu_name).lower().strip())
+    return all(tok in gpu_clean for tok in kw_tokens)
 
 
 def _solve_pulp(df: pd.DataFrame, constraints: dict) -> dict:
-    """Bài toán BIP chính: max AI_Score, ràng buộc cứng giá/cân nặng/pin.
-    Nếu infeasible, tự động chuyển sang bài toán nới lỏng (Soft Constraint)
-    để tìm laptop 'gần đạt chuẩn nhất'."""
-
+    """Giải bài toán bằng PuLP:
+    - Vòng 1: Tìm nghiệm tối ưu thỏa 100% ràng buộc cứng.
+    - Vòng 2: Nếu vô nghiệm, giải bài toán Soft BIP với biến bù (Slack variables)
+              để tìm nghiệm gần tối ưu nhất và đo đạc mức vi phạm chính xác.
+    """
     battery_col = "office_battery_minutes_final" if "office_battery_minutes_final" in df.columns else "office_battery_result_minutes"
+    indices = list(df.index)
 
-    # ---------- Vòng 1: thử giải với ràng buộc cứng tuyệt đối ----------
-    prob = pulp.LpProblem("laptop_selection", pulp.LpMaximize)
-    x = {i: pulp.LpVariable(f"x_{i}", cat="Binary") for i in df.index}
+    # -------------------------------------------------------------
+    # VÒNG 1: THỬ GIẢI VỚI RÀNG BUỘC CỨNG (STRICT BIP)
+    # -------------------------------------------------------------
+    prob = pulp.LpProblem("laptop_selection_strict", pulp.LpMaximize)
+    x = {i: pulp.LpVariable(f"x_{i}", cat="Binary") for i in indices}
 
-    prob += pulp.lpSum(df.loc[i, "AI_Score"] * x[i] for i in df.index)
-    prob += pulp.lpSum(x[i] for i in df.index) == 1
+    # Hàm mục tiêu: Maximize tổng AI_Score
+    prob += pulp.lpSum(df.loc[i, "AI_Score"] * x[i] for i in indices)
+    # Ràng buộc chỉ chọn duy nhất 1 laptop
+    prob += pulp.lpSum(x[i] for i in indices) == 1
 
+    # Ràng buộc giá
     if constraints.get("max_price") is not None:
-        prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in df.index) <= constraints["max_price"]
+        prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in indices) <= constraints["max_price"]
     if constraints.get("min_price") is not None:
-        prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in df.index) >= constraints["min_price"]
-    if constraints.get("max_weight") is not None:
-        prob += pulp.lpSum(df.loc[i, "laptop_weight"] * x[i] for i in df.index) <= constraints["max_weight"]
-    if constraints.get("min_battery") is not None:
-        prob += pulp.lpSum(df.loc[i, battery_col] * x[i] for i in df.index) >= constraints["min_battery"]
+        prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in indices) >= constraints["min_price"]
+
+    # Ràng buộc cân nặng & pin
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        prob += pulp.lpSum(df.loc[i, "laptop_weight"] * x[i] for i in indices) <= constraints["max_weight"]
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        prob += pulp.lpSum(df.loc[i, battery_col] * x[i] for i in indices) >= constraints["min_battery"]
+
+    # Ràng buộc Tags nhu cầu
+    for tag in constraints.get("required_tags") or []:
+        if tag in df.columns:
+            tag_vals = [1 if bool(df.loc[i, tag]) else 0 for i in indices]
+            prob += pulp.lpSum(tag_vals[i] * x[i] for i in indices) >= 1
+
+    # Ràng buộc GPU (Card rời / Tích hợp)
+    if "gpu_name" in df.columns:
+        if constraints.get("require_discrete_gpu") is True:
+            disc_vals = [1 if _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            prob += pulp.lpSum(disc_vals[i] * x[i] for i in indices) >= 1
+        elif constraints.get("require_discrete_gpu") is False:
+            integ_vals = [1 if not _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            prob += pulp.lpSum(integ_vals[i] * x[i] for i in indices) >= 1
+
+        if constraints.get("gpu_keyword"):
+            kw = constraints["gpu_keyword"]
+            kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
+            prob += pulp.lpSum(kw_vals[i] * x[i] for i in indices) >= 1
 
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
     if pulp.LpStatus[prob.status] == "Optimal":
-        chosen = [i for i in df.index if x[i].value() == 1][0]
-        row = df.loc[chosen]
-        return {
-            "laptop_id": int(row["laptop_model_id"]),
-            "is_feasible": True,
-            "is_relaxed": False,
-            "ai_score": float(row["AI_Score"]),
-            "explanation": (
-                f"Chọn '{row.get('laptop_name', row['laptop_model_id'])}' - "
-                f"thỏa mãn 100% ràng buộc, AI_Score cao nhất trong tập ứng viên "
-                f"({row['AI_Score']:.3f})."
-            ),
-        }
+        chosen_indices = [i for i in indices if x[i].value() and x[i].value() > 0.5]
+        if chosen_indices:
+            chosen = chosen_indices[0]
+            row = df.loc[chosen]
+            score_val = float(row["AI_Score"])
+            return {
+                "laptop_id": int(row["laptop_model_id"]),
+                "is_feasible": True,
+                "is_relaxed": False,
+                "ai_score": score_val,
+                "violations": [],
+                "violation_text": "",
+                "explanation": (
+                    f"Đề xuất tối ưu: '{row.get('laptop_name', row['laptop_model_id'])}'. "
+                    f"Mẫu máy này thỏa mãn 100% các tiêu chí của bạn với điểm đánh giá tối ưu đạt "
+                    f"{score_val * 10:.1f}/10 ⭐."
+                ),
+            }
 
-    # ---------- Vòng 2: Infeasible - chẩn đoán + nới lỏng (Soft Constraint) ----------
-    diagnosis = _diagnose_infeasible(df, constraints)
-
+    # -------------------------------------------------------------
+    # VÒNG 2: VÔ NGHIỆM -> GIẢI SOFT BIP RELAXATION (NGHIỆM GẦN TỐI ƯU)
+    # -------------------------------------------------------------
     relax_prob = pulp.LpProblem("laptop_selection_relaxed", pulp.LpMaximize)
-    x = {i: pulp.LpVariable(f"x_{i}", cat="Binary") for i in df.index}
+    x = {i: pulp.LpVariable(f"rx_{i}", cat="Binary") for i in indices}
+
     slack_price = pulp.LpVariable("slack_price", lowBound=0)
     slack_min_price = pulp.LpVariable("slack_min_price", lowBound=0)
     slack_weight = pulp.LpVariable("slack_weight", lowBound=0)
     slack_battery = pulp.LpVariable("slack_battery", lowBound=0)
+    slack_gpu_disc = pulp.LpVariable("slack_gpu_disc", lowBound=0)
+    slack_gpu_kw = pulp.LpVariable("slack_gpu_kw", lowBound=0)
+    slack_tags = {
+        tag: pulp.LpVariable(f"slack_tag_{tag}", lowBound=0)
+        for tag in constraints.get("required_tags") or []
+        if tag in df.columns
+    }
 
-    relax_prob += (
-        pulp.lpSum(df.loc[i, "AI_Score"] * x[i] for i in df.index)
-        - RELAX_PENALTY["price"] * slack_price
-        - RELAX_PENALTY["min_price"] * slack_min_price
-        - RELAX_PENALTY["weight"] * slack_weight
-        - RELAX_PENALTY["battery"] * slack_battery
-    )
-    relax_prob += pulp.lpSum(x[i] for i in df.index) == 1
+    # Hàm mục tiêu nới lỏng có phạt
+    obj = pulp.lpSum(df.loc[i, "AI_Score"] * x[i] for i in indices)
+    if constraints.get("max_price") is not None:
+        obj -= RELAX_PENALTY["price"] * slack_price
+    if constraints.get("min_price") is not None:
+        obj -= RELAX_PENALTY["min_price"] * slack_min_price
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        obj -= RELAX_PENALTY["weight"] * slack_weight
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        obj -= RELAX_PENALTY["battery"] * slack_battery
+    if constraints.get("require_discrete_gpu") is not None and "gpu_name" in df.columns:
+        obj -= RELAX_PENALTY["gpu_discrete"] * slack_gpu_disc
+    if constraints.get("gpu_keyword") and "gpu_name" in df.columns:
+        obj -= RELAX_PENALTY["gpu_keyword"] * slack_gpu_kw
+    for tag, s_var in slack_tags.items():
+        obj -= RELAX_PENALTY["tag"] * s_var
+
+    relax_prob += obj
+    relax_prob += pulp.lpSum(x[i] for i in indices) == 1
 
     if constraints.get("max_price") is not None:
-        relax_prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in df.index) <= constraints["max_price"] + slack_price
+        relax_prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in indices) <= constraints["max_price"] + slack_price
     if constraints.get("min_price") is not None:
-        relax_prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in df.index) >= constraints["min_price"] - slack_min_price
-    if constraints.get("max_weight") is not None:
-        relax_prob += pulp.lpSum(df.loc[i, "laptop_weight"] * x[i] for i in df.index) <= constraints["max_weight"] + slack_weight
-    if constraints.get("min_battery") is not None:
-        relax_prob += pulp.lpSum(df.loc[i, battery_col] * x[i] for i in df.index) >= constraints["min_battery"] - slack_battery
+        relax_prob += pulp.lpSum(df.loc[i, "price"] * x[i] for i in indices) >= constraints["min_price"] - slack_min_price
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        relax_prob += pulp.lpSum(df.loc[i, "laptop_weight"] * x[i] for i in indices) <= constraints["max_weight"] + slack_weight
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        relax_prob += pulp.lpSum(df.loc[i, battery_col] * x[i] for i in indices) >= constraints["min_battery"] - slack_battery
+
+    for tag, s_var in slack_tags.items():
+        tag_vals = [1 if bool(df.loc[i, tag]) else 0 for i in indices]
+        relax_prob += pulp.lpSum(tag_vals[i] * x[i] for i in indices) + s_var >= 1
+
+    if "gpu_name" in df.columns:
+        if constraints.get("require_discrete_gpu") is True:
+            disc_vals = [1 if _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            relax_prob += pulp.lpSum(disc_vals[i] * x[i] for i in indices) + slack_gpu_disc >= 1
+        elif constraints.get("require_discrete_gpu") is False:
+            integ_vals = [1 if not _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            relax_prob += pulp.lpSum(integ_vals[i] * x[i] for i in indices) + slack_gpu_disc >= 1
+
+        if constraints.get("gpu_keyword"):
+            kw = constraints["gpu_keyword"]
+            kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
+            relax_prob += pulp.lpSum(kw_vals[i] * x[i] for i in indices) + slack_gpu_kw >= 1
 
     relax_prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
-    if pulp.LpStatus[relax_prob.status] != "Optimal":
-        # Trường hợp hiếm: ngay cả bản nới lỏng cũng không giải được
-        # (thường do required_tags làm rỗng tập ứng viên từ đầu)
-        return {
-            "laptop_id": None,
-            "is_feasible": False,
-            "is_relaxed": False,
-            "ai_score": None,
-            "explanation": (
-                "Không tìm được laptop nào phù hợp, kể cả khi nới lỏng ràng buộc. "
-                "Có thể do các nhãn nhu cầu (ngành học/mục đích) đã lọc hết ứng viên. "
-                f"Chẩn đoán từng ràng buộc: {json.dumps(diagnosis, ensure_ascii=False)}"
-            ),
-            "diagnosis": diagnosis,
-        }
+    if pulp.LpStatus[relax_prob.status] == "Optimal":
+        chosen_indices = [i for i in indices if x[i].value() and x[i].value() > 0.5]
+        if chosen_indices:
+            chosen = chosen_indices[0]
+            row = df.loc[chosen]
+            score_val = float(row["AI_Score"])
 
-    chosen = [i for i in df.index if x[i].value() == 1][0]
-    row = df.loc[chosen]
+            violations = []
+            if constraints.get("max_price") is not None and slack_price.value() and slack_price.value() > 100:
+                violations.append(f"vượt ngân sách tối đa {slack_price.value():,.0f}đ")
+            if constraints.get("min_price") is not None and slack_min_price.value() and slack_min_price.value() > 100:
+                violations.append(f"thấp hơn ngân sách tối thiểu {slack_min_price.value():,.0f}đ")
+            if constraints.get("max_weight") is not None and slack_weight.value() and slack_weight.value() > 0.05:
+                violations.append(f"nặng hơn {slack_weight.value():.2f}kg so với yêu cầu")
+            if constraints.get("min_battery") is not None and slack_battery.value() and slack_battery.value() > 5:
+                violations.append(f"thiếu {slack_battery.value():.0f} phút pin so với yêu cầu")
+            if constraints.get("require_discrete_gpu") is True and slack_gpu_disc.value() and slack_gpu_disc.value() > 0.5:
+                violations.append("chưa trang bị card đồ họa rời (dùng card tích hợp)")
+            elif constraints.get("require_discrete_gpu") is False and slack_gpu_disc.value() and slack_gpu_disc.value() > 0.5:
+                violations.append("trang bị card đồ họa rời thay vì card tích hợp")
+            if constraints.get("gpu_keyword") and slack_gpu_kw.value() and slack_gpu_kw.value() > 0.5:
+                violations.append(f"không trang bị đúng dòng GPU '{constraints['gpu_keyword']}'")
+            for tag, s_var in slack_tags.items():
+                if s_var.value() and s_var.value() > 0.5:
+                    tag_name_vi = {
+                        "is_gaming_friendly": "Gaming",
+                        "is_office_friendly": "Văn phòng",
+                        "is_graphic_friendly": "Đồ họa",
+                        "is_programming_friendly": "Lập trình",
+                    }.get(tag, tag)
+                    violations.append(f"chưa đạt chuẩn tối ưu riêng cho nhu cầu {tag_name_vi}")
 
-    violations = []
-    if slack_price.value() and slack_price.value() > 1:
-        violations.append(f"vượt ngân sách tối đa {slack_price.value():,.0f}đ")
-    if slack_min_price.value() and slack_min_price.value() > 1:
-        violations.append(f"thấp hơn ngân sách tối thiểu {slack_min_price.value():,.0f}đ")
-    if slack_weight.value() and slack_weight.value() > 0.01:
-        violations.append(f"nặng hơn {slack_weight.value():.2f}kg so với yêu cầu")
-    if slack_battery.value() and slack_battery.value() > 1:
-        violations.append(f"thiếu {slack_battery.value():.0f} phút pin so với yêu cầu")
+            violation_text = ", ".join(violations) if violations else "chưa thỏa mãn đồng thời tất cả các tiêu chí"
 
-    violation_text = ", ".join(violations) if violations else "không xác định được mức chênh lệch cụ thể"
+            return {
+                "laptop_id": int(row["laptop_model_id"]),
+                "is_feasible": False,
+                "is_relaxed": True,
+                "ai_score": score_val,
+                "violations": violations,
+                "violation_text": violation_text,
+                "explanation": (
+                    f"Gợi ý gần đạt chuẩn nhất: '{row.get('laptop_name', row['laptop_model_id'])}'. "
+                    f"Hiện chưa có mẫu máy thỏa mãn tuyệt đối 100% các tiêu chí ({violation_text}), "
+                    f"nhưng đây là lựa chọn cân đối và phù hợp nhất với điểm đánh giá đạt {score_val * 10:.1f}/10 ⭐."
+                ),
+            }
 
+    # Trường hợp dự phòng cực đoan: Lấy laptop có AI_Score cao nhất
+    best_row = df.sort_values(by="AI_Score", ascending=False).iloc[0]
     return {
-        "laptop_id": int(row["laptop_model_id"]),
+        "laptop_id": int(best_row["laptop_model_id"]),
         "is_feasible": False,
         "is_relaxed": True,
-        "ai_score": float(row["AI_Score"]),
-        "explanation": (
-            f"Không có laptop nào thỏa mãn 100% yêu cầu. Gợi ý gần đạt chuẩn nhất: "
-            f"'{row.get('laptop_name', row['laptop_model_id'])}' ({violation_text}). "
-            f"Chẩn đoán: {json.dumps(diagnosis, ensure_ascii=False)}"
-        ),
-        "diagnosis": diagnosis,
+        "ai_score": float(best_row["AI_Score"]),
+        "violations": ["ràng buộc quá khắt khe"],
+        "violation_text": "ràng buộc quá khắt khe",
+        "explanation": f"Gợi ý mẫu laptop nổi bật nhất: '{best_row.get('laptop_name', best_row['laptop_model_id'])}'.",
     }
 
 
 def _solve_gurobi(df: pd.DataFrame, constraints: dict) -> dict:
-    """Backend Gurobi thật - dùng computeIIS() khi Infeasible, và tự viết
-    bài toán nới lỏng (Soft Constraint) bằng Gurobi luôn, không mượn PuLP,
-    để giữ đúng 1 solver xuyên suốt khi bạn đã có license."""
+    """Giải bài toán bằng Gurobi:
+    - Vòng 1: Strict BIP.
+    - Vòng 2: Soft BIP Relaxation (Nghiệm gần tối ưu).
+    """
     battery_col = "office_battery_minutes_final" if "office_battery_minutes_final" in df.columns else "office_battery_result_minutes"
+    indices = list(df.index)
 
-    # ---------- Vòng 1: ràng buộc cứng tuyệt đối ----------
-    model = _create_gurobi_model("laptop_selection")
+    # -------------------------------------------------------------
+    # VÒNG 1: THỬ GIẢI RÀNG BUỘC CỨNG (STRICT)
+    # -------------------------------------------------------------
+    model = _create_gurobi_model("laptop_selection_strict")
     model.setParam("OutputFlag", 0)
-    x = model.addVars(df.index, vtype=GRB.BINARY, name="x")
 
-    model.setObjective(
-        gp.quicksum(df.loc[i, "AI_Score"] * x[i] for i in df.index), GRB.MAXIMIZE
-    )
-    model.addConstr(gp.quicksum(x[i] for i in df.index) == 1, name="select_one")
+    x = model.addVars(indices, vtype=GRB.BINARY, name="x")
+    model.setObjective(gp.quicksum(df.loc[i, "AI_Score"] * x[i] for i in indices), GRB.MAXIMIZE)
+    model.addConstr(gp.quicksum(x[i] for i in indices) == 1, name="choose_one")
 
     if constraints.get("max_price") is not None:
-        model.addConstr(
-            gp.quicksum(df.loc[i, "price"] * x[i] for i in df.index) <= constraints["max_price"],
-            name="budget_max",
-        )
+        model.addConstr(gp.quicksum(df.loc[i, "price"] * x[i] for i in indices) <= constraints["max_price"], name="budget_max")
     if constraints.get("min_price") is not None:
-        model.addConstr(
-            gp.quicksum(df.loc[i, "price"] * x[i] for i in df.index) >= constraints["min_price"],
-            name="budget_min",
-        )
-    if constraints.get("max_weight") is not None:
-        model.addConstr(
-            gp.quicksum(df.loc[i, "laptop_weight"] * x[i] for i in df.index) <= constraints["max_weight"],
-            name="weight",
-        )
-    if constraints.get("min_battery") is not None:
-        model.addConstr(
-            gp.quicksum(df.loc[i, battery_col] * x[i] for i in df.index) >= constraints["min_battery"],
-            name="battery",
-        )
+        model.addConstr(gp.quicksum(df.loc[i, "price"] * x[i] for i in indices) >= constraints["min_price"], name="budget_min")
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        model.addConstr(gp.quicksum(df.loc[i, "laptop_weight"] * x[i] for i in indices) <= constraints["max_weight"], name="weight")
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        model.addConstr(gp.quicksum(df.loc[i, battery_col] * x[i] for i in indices) >= constraints["min_battery"], name="battery")
+
+    for tag in constraints.get("required_tags") or []:
+        if tag in df.columns:
+            tag_vals = [1 if bool(df.loc[i, tag]) else 0 for i in indices]
+            model.addConstr(gp.quicksum(tag_vals[i] * x[i] for i in indices) >= 1, name=f"tag_{tag}")
+
+    if "gpu_name" in df.columns:
+        if constraints.get("require_discrete_gpu") is True:
+            disc_vals = [1 if _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            model.addConstr(gp.quicksum(disc_vals[i] * x[i] for i in indices) >= 1, name="gpu_disc")
+        elif constraints.get("require_discrete_gpu") is False:
+            integ_vals = [1 if not _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            model.addConstr(gp.quicksum(integ_vals[i] * x[i] for i in indices) >= 1, name="gpu_integ")
+
+        if constraints.get("gpu_keyword"):
+            kw = constraints["gpu_keyword"]
+            kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
+            model.addConstr(gp.quicksum(kw_vals[i] * x[i] for i in indices) >= 1, name="gpu_kw")
 
     model.optimize()
 
     if model.status == GRB.OPTIMAL:
-        chosen = [i for i in df.index if x[i].X > 0.5][0]
-        row = df.loc[chosen]
-        return {
-            "laptop_id": int(row["laptop_model_id"]),
-            "is_feasible": True,
-            "is_relaxed": False,
-            "ai_score": float(row["AI_Score"]),
-            "explanation": (
-                f"[Gurobi] Chọn '{row.get('laptop_name', row['laptop_model_id'])}' - "
-                f"thỏa mãn 100% ràng buộc, AI_Score cao nhất trong tập ứng viên "
-                f"({row['AI_Score']:.3f})."
-            ),
-        }
+        chosen_indices = [i for i in indices if x[i].X > 0.5]
+        if chosen_indices:
+            chosen = chosen_indices[0]
+            row = df.loc[chosen]
+            score_val = float(row["AI_Score"])
+            return {
+                "laptop_id": int(row["laptop_model_id"]),
+                "is_feasible": True,
+                "is_relaxed": False,
+                "ai_score": score_val,
+                "violations": [],
+                "violation_text": "",
+                "explanation": (
+                    f"Đề xuất tối ưu: '{row.get('laptop_name', row['laptop_model_id'])}'. "
+                    f"Mẫu máy này thỏa mãn 100% các tiêu chí của bạn với điểm đánh giá tối ưu đạt "
+                    f"{score_val * 10:.1f}/10 ⭐."
+                ),
+            }
 
-    # ---------- Vòng 2: Infeasible - computeIIS() để biết ràng buộc nào xung đột ----------
-    model.computeIIS()
-    conflicting = [c.constrName for c in model.getConstrs() if c.IISConstr]
-    diagnosis = _diagnose_infeasible(df, constraints)
-
-    # ---------- Vòng 3: nới lỏng bằng Soft Constraint (Slack Variable) ----------
+    # -------------------------------------------------------------
+    # VÒNG 2: VÔ NGHIỆM -> GIẢI SOFT BIP RELAXATION BẰNG GUROBI
+    # -------------------------------------------------------------
     relax_model = _create_gurobi_model("laptop_selection_relaxed")
     relax_model.setParam("OutputFlag", 0)
-    x = relax_model.addVars(df.index, vtype=GRB.BINARY, name="x")
+
+    x = relax_model.addVars(indices, vtype=GRB.BINARY, name="x")
     slack_price = relax_model.addVar(lb=0, name="slack_price")
     slack_min_price = relax_model.addVar(lb=0, name="slack_min_price")
     slack_weight = relax_model.addVar(lb=0, name="slack_weight")
     slack_battery = relax_model.addVar(lb=0, name="slack_battery")
+    slack_gpu_disc = relax_model.addVar(lb=0, name="slack_gpu_disc")
+    slack_gpu_kw = relax_model.addVar(lb=0, name="slack_gpu_kw")
+    slack_tags = {
+        tag: relax_model.addVar(lb=0, name=f"slack_tag_{tag}")
+        for tag in constraints.get("required_tags") or []
+        if tag in df.columns
+    }
 
-    relax_model.setObjective(
-        gp.quicksum(df.loc[i, "AI_Score"] * x[i] for i in df.index)
-        - RELAX_PENALTY["price"] * slack_price
-        - RELAX_PENALTY["min_price"] * slack_min_price
-        - RELAX_PENALTY["weight"] * slack_weight
-        - RELAX_PENALTY["battery"] * slack_battery,
-        GRB.MAXIMIZE,
-    )
-    relax_model.addConstr(gp.quicksum(x[i] for i in df.index) == 1)
+    obj_expr = gp.quicksum(df.loc[i, "AI_Score"] * x[i] for i in indices)
+    if constraints.get("max_price") is not None:
+        obj_expr -= RELAX_PENALTY["price"] * slack_price
+    if constraints.get("min_price") is not None:
+        obj_expr -= RELAX_PENALTY["min_price"] * slack_min_price
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        obj_expr -= RELAX_PENALTY["weight"] * slack_weight
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        obj_expr -= RELAX_PENALTY["battery"] * slack_battery
+    if constraints.get("require_discrete_gpu") is not None and "gpu_name" in df.columns:
+        obj_expr -= RELAX_PENALTY["gpu_discrete"] * slack_gpu_disc
+    if constraints.get("gpu_keyword") and "gpu_name" in df.columns:
+        obj_expr -= RELAX_PENALTY["gpu_keyword"] * slack_gpu_kw
+    for tag, s_var in slack_tags.items():
+        obj_expr -= RELAX_PENALTY["tag"] * s_var
+
+    relax_model.setObjective(obj_expr, GRB.MAXIMIZE)
+    relax_model.addConstr(gp.quicksum(x[i] for i in indices) == 1)
 
     if constraints.get("max_price") is not None:
-        relax_model.addConstr(
-            gp.quicksum(df.loc[i, "price"] * x[i] for i in df.index) <= constraints["max_price"] + slack_price
-        )
+        relax_model.addConstr(gp.quicksum(df.loc[i, "price"] * x[i] for i in indices) <= constraints["max_price"] + slack_price)
     if constraints.get("min_price") is not None:
-        relax_model.addConstr(
-            gp.quicksum(df.loc[i, "price"] * x[i] for i in df.index) >= constraints["min_price"] - slack_min_price
-        )
-    if constraints.get("max_weight") is not None:
-        relax_model.addConstr(
-            gp.quicksum(df.loc[i, "laptop_weight"] * x[i] for i in df.index) <= constraints["max_weight"] + slack_weight
-        )
-    if constraints.get("min_battery") is not None:
-        relax_model.addConstr(
-            gp.quicksum(df.loc[i, battery_col] * x[i] for i in df.index) >= constraints["min_battery"] - slack_battery
-        )
+        relax_model.addConstr(gp.quicksum(df.loc[i, "price"] * x[i] for i in indices) >= constraints["min_price"] - slack_min_price)
+    if constraints.get("max_weight") is not None and "laptop_weight" in df.columns:
+        relax_model.addConstr(gp.quicksum(df.loc[i, "laptop_weight"] * x[i] for i in indices) <= constraints["max_weight"] + slack_weight)
+    if constraints.get("min_battery") is not None and battery_col in df.columns:
+        relax_model.addConstr(gp.quicksum(df.loc[i, battery_col] * x[i] for i in indices) >= constraints["min_battery"] - slack_battery)
+
+    for tag, s_var in slack_tags.items():
+        tag_vals = [1 if bool(df.loc[i, tag]) else 0 for i in indices]
+        relax_model.addConstr(gp.quicksum(tag_vals[i] * x[i] for i in indices) + s_var >= 1)
+
+    if "gpu_name" in df.columns:
+        if constraints.get("require_discrete_gpu") is True:
+            disc_vals = [1 if _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            relax_model.addConstr(gp.quicksum(disc_vals[i] * x[i] for i in indices) + slack_gpu_disc >= 1)
+        elif constraints.get("require_discrete_gpu") is False:
+            integ_vals = [1 if not _is_discrete_gpu(df.loc[i, "gpu_name"]) else 0 for i in indices]
+            relax_model.addConstr(gp.quicksum(integ_vals[i] * x[i] for i in indices) + slack_gpu_disc >= 1)
+
+        if constraints.get("gpu_keyword"):
+            kw = constraints["gpu_keyword"]
+            kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
+            relax_model.addConstr(gp.quicksum(kw_vals[i] * x[i] for i in indices) + slack_gpu_kw >= 1)
 
     relax_model.optimize()
 
-    if relax_model.status != GRB.OPTIMAL:
-        return {
-            "laptop_id": None,
-            "is_feasible": False,
-            "is_relaxed": False,
-            "ai_score": None,
-            "explanation": (
-                f"[Gurobi] Không tìm được laptop nào phù hợp, kể cả khi nới lỏng. "
-                f"Ràng buộc xung đột (IIS): {conflicting}. "
-                f"Chẩn đoán: {json.dumps(diagnosis, ensure_ascii=False)}"
-            ),
-            "diagnosis": diagnosis,
-        }
+    if relax_model.status == GRB.OPTIMAL:
+        chosen_indices = [i for i in indices if x[i].X > 0.5]
+        if chosen_indices:
+            chosen = chosen_indices[0]
+            row = df.loc[chosen]
+            score_val = float(row["AI_Score"])
 
-    chosen = [i for i in df.index if x[i].X > 0.5][0]
-    row = df.loc[chosen]
+            violations = []
+            if constraints.get("max_price") is not None and slack_price.X > 100:
+                violations.append(f"vượt ngân sách tối đa {slack_price.X:,.0f}đ")
+            if constraints.get("min_price") is not None and slack_min_price.X > 100:
+                violations.append(f"thấp hơn ngân sách tối thiểu {slack_min_price.X:,.0f}đ")
+            if constraints.get("max_weight") is not None and slack_weight.X > 0.05:
+                violations.append(f"nặng hơn {slack_weight.X:.2f}kg so với yêu cầu")
+            if constraints.get("min_battery") is not None and slack_battery.X > 5:
+                violations.append(f"thiếu {slack_battery.X:.0f} phút pin so với yêu cầu")
+            if constraints.get("require_discrete_gpu") is True and slack_gpu_disc.X > 0.5:
+                violations.append("chưa trang bị card đồ họa rời (dùng card tích hợp)")
+            elif constraints.get("require_discrete_gpu") is False and slack_gpu_disc.X > 0.5:
+                violations.append("trang bị card đồ họa rời thay vì card tích hợp")
+            if constraints.get("gpu_keyword") and slack_gpu_kw.X > 0.5:
+                violations.append(f"không trang bị đúng dòng GPU '{constraints['gpu_keyword']}'")
+            for tag, s_var in slack_tags.items():
+                if s_var.X > 0.5:
+                    tag_name_vi = {
+                        "is_gaming_friendly": "Gaming",
+                        "is_office_friendly": "Văn phòng",
+                        "is_graphic_friendly": "Đồ họa",
+                        "is_programming_friendly": "Lập trình",
+                    }.get(tag, tag)
+                    violations.append(f"chưa đạt chuẩn tối ưu riêng cho nhu cầu {tag_name_vi}")
 
-    violations = []
-    if slack_price.X > 1:
-        violations.append(f"vượt ngân sách tối đa {slack_price.X:,.0f}đ")
-    if slack_min_price.X > 1:
-        violations.append(f"thấp hơn ngân sách tối thiểu {slack_min_price.X:,.0f}đ")
-    if slack_weight.X > 0.01:
-        violations.append(f"nặng hơn {slack_weight.X:.2f}kg so với yêu cầu")
-    if slack_battery.X > 1:
-        violations.append(f"thiếu {slack_battery.X:.0f} phút pin so với yêu cầu")
-    violation_text = ", ".join(violations) if violations else "không xác định được mức chênh lệch cụ thể"
+            violation_text = ", ".join(violations) if violations else "chưa thỏa mãn đồng thời tất cả các tiêu chí"
 
-    return {
-        "laptop_id": int(row["laptop_model_id"]),
-        "is_feasible": False,
-        "is_relaxed": True,
-        "ai_score": float(row["AI_Score"]),
-        "explanation": (
-            f"[Gurobi] Không có laptop nào thỏa mãn 100% yêu cầu (ràng buộc xung đột: "
-            f"{conflicting}). Gợi ý gần đạt chuẩn nhất: "
-            f"'{row.get('laptop_name', row['laptop_model_id'])}' ({violation_text}). "
-            f"Chẩn đoán: {json.dumps(diagnosis, ensure_ascii=False)}"
-        ),
-        "diagnosis": diagnosis,
-    }
+            return {
+                "laptop_id": int(row["laptop_model_id"]),
+                "is_feasible": False,
+                "is_relaxed": True,
+                "ai_score": score_val,
+                "violations": violations,
+                "violation_text": violation_text,
+                "explanation": (
+                    f"Gợi ý gần đạt chuẩn nhất: '{row.get('laptop_name', row['laptop_model_id'])}'. "
+                    f"Hiện chưa có mẫu máy thỏa mãn tuyệt đối 100% các tiêu chí ({violation_text}), "
+                    f"nhưng đây là lựa chọn cân đối và phù hợp nhất với điểm đánh giá đạt {score_val * 10:.1f}/10 ⭐."
+                ),
+            }
+
+    # Fallback sang PuLP nếu Gurobi gặp vấn đề
+    return _solve_pulp(df, constraints)
 
 
 def solve(constraints: dict, scored_laptops: pd.DataFrame, backend: str = "gurobi") -> dict:
-    """Interface chính - dùng trong backend/app/api/routes/chat.py.
-
-    constraints: dict dạng {"max_price": ..., "min_price": ..., "max_weight": ...,
-                             "min_battery": ..., "required_tags": [...]}
-    scored_laptops: DataFrame có cột laptop_model_id, price, laptop_weight,
-                     office_battery_minutes_final, AI_Score, và các cột is_*_friendly
-    backend: "pulp" (mặc định, không cần license) hoặc "gurobi" (cần license)
-    """
+    """Interface chính giải bài toán tối ưu và nới lỏng ràng buộc Soft BIP."""
     if scored_laptops.empty:
-        return {"laptop_id": None, "is_feasible": False, "is_relaxed": False,
-                "explanation": "Chưa có dữ liệu laptop đã chấm điểm (AI_Score)."}
+        return {
+            "laptop_id": None,
+            "is_feasible": False,
+            "is_relaxed": False,
+            "explanation": "Chưa có dữ liệu laptop đã chấm điểm (AI_Score)."
+        }
 
-    required_tags = constraints.get("required_tags", [])
     clean_df = _drop_unusable_rows(scored_laptops, constraints)
-
     if clean_df.empty:
-        return {
-            "laptop_id": None,
-            "is_feasible": False,
-            "is_relaxed": False,
-            "explanation": (
-                "Không còn laptop nào đủ dữ liệu cho các ràng buộc đang xét "
-                "(quá nhiều giá trị thiếu ở price/laptop_weight/pin)."
-            ),
-        }
-
-    candidates, empty_tag = _filter_by_tags(clean_df, required_tags)
-
-    if empty_tag is not None:
-        return {
-            "laptop_id": None,
-            "is_feasible": False,
-            "is_relaxed": False,
-            "explanation": (
-                f"Không có laptop nào thỏa nhãn nhu cầu '{empty_tag}' trong toàn bộ "
-                f"danh mục hiện có. Cần bỏ bớt yêu cầu về nhu cầu chuyên biệt này."
-            ),
-        }
+        clean_df = scored_laptops
 
     if backend == "gurobi" and GUROBI_AVAILABLE:
         try:
-            return _solve_gurobi(candidates, constraints)
-        except RuntimeError as e:
-            # Thiếu biến môi trường WLS - lỗi cấu hình rõ ràng, nên dừng
-            # hẳn để người phát triển sửa .env, KHÔNG âm thầm chuyển PuLP
-            # (tránh việc tưởng đang chạy Gurobi nhưng thực ra không phải).
-            raise
-        except gp.GurobiError as e:  # type: ignore[union-attr]
-            # Lỗi kết nối/xác thực WLS (VD mạng chập chờn, license hết hạn)
-            # - đây là lỗi RUNTIME ngoài ý muốn khi đang chạy thật, nên
-            # chuyển sang PuLP để chatbot vẫn trả lời được cho khách,
-            # đồng thời log rõ để biết mà kiểm tra license sau.
-            print(
-                f"CẢNH BÁO: Gurobi WLS lỗi khi đang chạy ({e}) - tự động "
-                f"chuyển sang PuLP cho lượt này. Cần kiểm tra lại license/mạng."
-            )
-            return _solve_pulp(candidates, constraints)
+            return _solve_gurobi(clean_df, constraints)
+        except Exception as e:
+            print(f"[Solver Warning] Gurobi gặp sự cố ({e}), chuyển sang PuLP solver.")
+            return _solve_pulp(clean_df, constraints)
 
-    if backend == "gurobi" and not GUROBI_AVAILABLE:
-        print("CẢNH BÁO: backend='gurobi' được chọn nhưng gurobipy chưa cài/license "
-              "không hợp lệ - tự động chuyển sang PuLP.")
-
-    return _solve_pulp(candidates, constraints)
+    return _solve_pulp(clean_df, constraints)
 
 
 def main():
-    """Test nhanh solver độc lập, không cần chạy backend/frontend."""
+    """Test nhanh solver độc lập."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--scored", type=Path, default=Path("data/processed/laptop_dataset_scored.csv"))
     parser.add_argument("--backend", choices=["pulp", "gurobi"], default="gurobi")
@@ -515,9 +524,9 @@ def main():
     df = pd.read_csv(args.scored)
 
     test_cases = [
-        {"max_price": 20_000_000, "max_weight": 3, "min_battery": 360, "required_tags": []},
-        {"max_price": 8_000_000, "max_weight": 1.0, "min_battery": 600, "required_tags": []},  # cố tình phi thực tế
-        {"min_price": 50_000_000, "max_price": 100_000_000, "required_tags": []},  # có cả min và max
+        {"max_price": 15_000_000, "required_tags": ["is_office_friendly"]},
+        {"max_price": 25_000_000, "gpu_keyword": "RTX 4060", "required_tags": ["is_gaming_friendly"]},
+        {"max_price": 8_000_000, "max_weight": 1.0, "min_battery": 600, "required_tags": []},
     ]
 
     for i, constraints in enumerate(test_cases, 1):
