@@ -21,8 +21,7 @@ Output:
     - backend/app/scoring/model.pkl                  (model đã train)
     - data/processed/laptop_dataset_scored.csv        (toàn bộ laptop kèm AI_Score)
 
-Cách dùng:
-    python train_lgbm.py
+
 """
 
 import argparse
