@@ -13,10 +13,6 @@ Flow mỗi lượt chat:
 import os
 import uuid
 import urllib.parse
-<<<<<<< HEAD
-=======
-import uuid
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 from pathlib import Path
 from typing import Literal
 
@@ -233,14 +229,11 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
     if price_vnd and price_vnd > 0:
         price_note = ""
         max_p = constraints.get("max_price")
-<<<<<<< HEAD
         if max_p is None and "constraints" in constraints:
             for c in constraints.get("constraints", []):
                 if c.get("field") == "price" and c.get("op") == "<=":
                     max_p = c.get("value")
                     break
-=======
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
         if is_relaxed and max_p and price_vnd > max_p:
             diff = price_vnd - max_p
             price_note = f" *(Vượt ngân sách {diff:,.0f} VNĐ)*"
@@ -274,7 +267,6 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
     footer = "\n\n*Bạn thấy mẫu máy này thế nào? Nếu muốn đổi tầm giá, hãng máy hoặc cấu hình khác, hãy nói cho mình biết nhé!*"
 
     return f"{header}\n\n{specs_str}{media_info}{footer}"
-<<<<<<< HEAD
 
 
 def _sanitize_for_json(obj):
@@ -286,8 +278,6 @@ def _sanitize_for_json(obj):
     elif hasattr(obj, "item"):
         return obj.item()
     return obj
-=======
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 
 
 # ---------- Endpoint ----------
@@ -307,99 +297,10 @@ def chat(req: ChatRequest):
     # 3. Trích xuất ràng buộc từ câu hỏi
     new_delta = nl2constraint.parse(req.message)
     has_new_constraints = any(
-<<<<<<< HEAD
-=======
         v is not None and v != [] and v
         for v in new_delta.values()
     )
 
-    # 4. Xác định ý định người dùng (Intent Detection)
-    intent = nl2constraint.detect_intent(req.message, has_extracted_constraints=has_new_constraints)
-
-    # XỬ LÝ THEO Ý ĐỊNH:
-    # A. Ý định RESET / Xóa bộ lọc
-    if intent == "RESET":
-        session_manager.clear_session(session_id)
-        reply = (
-            "Đã làm mới toàn bộ bộ lọc và tiêu chí tìm kiếm! ✨\n\n"
-            "Bạn đang cần tìm laptop với ngân sách khoảng bao nhiêu và phục vụ nhu cầu gì "
-            "(học tập, văn phòng, đồ họa, lập trình hay gaming...)?"
-        )
-        return ChatResponse(
-            session_id=session_id,
-            reply=reply,
-            constraints={},
-            result=None,
-            laptop_details=None,
-        )
-
-    # B. Ý định CHÀO HỎI thuần túy (không có tiêu chí laptop cụ thể)
-    if intent == "GREETING" and not has_new_constraints:
-        reply = None
-        try:
-            from app.ai.gemini_service import generate_conversational_reply
-            reply = generate_conversational_reply(
-                user_message=req.message,
-                current_constraints=old_constraints,
-                last_laptop_details=last_laptop_details,
-            )
-        except Exception:
-            reply = None
-
-        if not reply:
-            reply = (
-                "Chào bạn! 👋 Mình là trợ lý AI chuyên tư vấn lựa chọn laptop tối ưu.\n\n"
-                "Để mình giúp bạn chọn được chiếc laptop ưng ý nhất, bạn có thể chia sẻ thêm:\n"
-                "- 💰 **Ngân sách dự kiến:** (VD: 15-20 triệu, dưới 25tr...)\n"
-                "- 🎯 **Nhu cầu chính:** (VD: Học tập/văn phòng, Lập trình IT, Đồ họa thiết kế, hay Gaming...)\n"
-                "- ⚡ **Yêu cầu mong muốn:** (VD: Pin trâu, mỏng nhẹ, có card đồ họa rời RTX...)"
-            )
-
-        return ChatResponse(
-            session_id=session_id,
-            reply=reply,
-            constraints=old_constraints,
-            result=None,
-            laptop_details=None,
-        )
-
-    # C. Ý định TRÒ CHUYỆN / HỎI NGOÀI LỀ / GÓP Ý (nhưng không bổ sung tiêu chí tìm máy)
-    if intent == "SMALLTALK" and not has_new_constraints:
-        reply = None
-        try:
-            from app.ai.gemini_service import generate_conversational_reply
-            reply = generate_conversational_reply(
-                user_message=req.message,
-                current_constraints=old_constraints,
-                last_laptop_details=last_laptop_details,
-            )
-        except Exception:
-            reply = None
-
-        if not reply:
-            reply = (
-                "Cảm ơn chia sẻ của bạn! 😊 Nếu bạn cần tìm mẫu laptop phù hợp hoặc muốn điều chỉnh tiêu chí "
-                "(ngân sách, cấu hình, hãng máy), bạn cứ nhắn cho mình nhé!"
-            )
-
-        return ChatResponse(
-            session_id=session_id,
-            reply=reply,
-            constraints=old_constraints,
-            result=None,
-            laptop_details=None,
-        )
-
-    # D. Ý định TÌM KIẾM / LỌC LAPTOP (SEARCH)
-    merged_constraints = session_manager.merge_constraints(old_constraints, new_delta)
-
-    has_any_constraint = any(
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
-        v is not None and v != [] and v
-        for v in new_delta.values()
-    )
-
-<<<<<<< HEAD
     # 4. Xác định ý định người dùng (Intent Detection)
     intent = nl2constraint.detect_intent(req.message, has_extracted_constraints=has_new_constraints)
 
@@ -521,21 +422,6 @@ def chat(req: ChatRequest):
                 laptop_details = _sanitize_for_json(laptop_details)
         except Exception:
             pass
-=======
-    result = None
-    df = None
-    laptop_details = None
-
-    if has_any_constraint:
-        try:
-            df = _load_scored_df()
-            result = solver.solve(merged_constraints, df, backend="gurobi")
-            laptop_details = _get_laptop_details(df, result.get("laptop_id"))
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=503, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Lỗi solver: {e}")
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 
     # Lưu lại session
     session_manager.save_state(session_id, {
@@ -543,15 +429,9 @@ def chat(req: ChatRequest):
         "last_laptop_details": laptop_details or last_laptop_details,
     })
 
-<<<<<<< HEAD
     # Xây dựng câu trả lời tư vấn
     reply = None
     if EXPLANATION_MODE == "gemini" and result.get("laptop_id") is not None:
-=======
-    # Xây dựng câu trả lời tư vấn chuyên sâu
-    reply = None
-    if result is not None:
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
         try:
             from app.ai.gemini_service import generate_gemini_consultation
             reply = generate_gemini_consultation(

@@ -26,18 +26,11 @@ else:
 
 _client = None
 DEFAULT_MODELS = [
-<<<<<<< HEAD
     "gemini-flash-latest",
     "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-1.5-flash",
-=======
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-1.5-flash"
-    
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 ]
 
 
@@ -104,7 +97,6 @@ def _generate_with_fallback(prompt: str, config: Optional[dict] = None) -> Optio
 # ==============================================================================
 EXTRACTION_SYSTEM_PROMPT = """
 Bạn là bộ phân tích ngôn ngữ tự nhiên cho chatbot tư vấn chọn laptop.
-<<<<<<< HEAD
 Nhiệm vụ của bạn là đọc tin nhắn người dùng (tiếng Việt) và trích xuất các ràng buộc (constraints), sở thích (preferences) và nhãn nhu cầu (required_tags).
 
 CÁC TRƯỜNG ĐƯỢC PHÉP (allowed fields):
@@ -164,38 +156,11 @@ QUY TẮC PHÂN LOẠI SEMANTIC:
 QUY TẮC QUAN TRỌNG:
 - Chỉ trả về duy nhất 1 JSON object hợp lệ, không kèm theo bất kỳ văn bản giải thích nào khác ngoài JSON.
 - Nếu không có ràng buộc/sở thích nào, trả về danh sách rỗng [] cho các trường.
-=======
-Nhiệm vụ của bạn là đọc tin nhắn người dùng (tiếng Việt) và trích xuất các ràng buộc kỹ thuật.
-
-Các trường cần trích xuất (trả về đúng định dạng JSON):
-- max_price: (số thực hoặc null) Ngân sách tối đa tính theo VNĐ. (VD: 20 triệu -> 20000000, 15tr -> 15000000, 25 củ -> 25000000).
-- min_price: (số thực hoặc null) Ngân sách tối thiểu tính theo VNĐ.
-- max_weight: (số thực hoặc null) Cân nặng tối đa tính theo Kilogram (kg). (VD: 1.5kg -> 1.5, nhẹ dưới 2 cân -> 2.0).
-- min_battery: (số thực hoặc null) Thời lượng pin tối thiểu tính theo PHÚT. (VD: 6 tiếng -> 360, 8h -> 480).
-- require_discrete_gpu: (boolean hoặc null)
-    + true: Người dùng yêu cầu máy phải có CARD ĐỒ HỌA RỜI / GPU RỜI (discrete GPU), card NVIDIA, RTX, GTX, hoặc chơi game nặng/đồ họa 3D cần card rời.
-    + false: Người dùng yêu cầu card onboard / card tích hợp, hoặc ghi rõ không cần card rời.
-    + null: Người dùng không đề cập hoặc không có yêu cầu cụ thể về loại card.
-- gpu_keyword: (chuỗi hoặc null) Dòng GPU cụ thể mà người dùng yêu cầu (VD: "RTX 4060", "RTX 4050", "RTX 3050", "RTX 4070", "RTX 5060", "RTX", "GTX", "NVIDIA", "Radeon", "Intel Arc", "Apple M4"...). Nếu không yêu cầu model GPU cụ thể, trả về null.
-- required_tags: (danh sách chuỗi) Các nhãn nhu cầu được chọn từ 4 nhãn chuẩn sau:
-    + "is_gaming_friendly" (chơi game, esport, fps, cấu hình mạnh...)
-    + "is_programming_friendly" (lập trình, code, dev, IT, CNTT, chạy máy ảo...)
-    + "is_graphic_friendly" (đồ họa, photoshop, render, 3d, kiến trúc, video...)
-    + "is_office_friendly" (văn phòng, word, excel, học sinh, sinh viên, mỏng nhẹ...)
-
-QUY TẮC QUAN TRỌNG:
-- Chỉ trả về duy nhất 1 JSON object hợp lệ, không kèm theo bất kỳ văn bản giải thích nào khác.
-- Nếu không tìm thấy ràng buộc nào, để giá trị là null hoặc [] cho required_tags.
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 """
 
 
 def extract_constraints_gemini(user_message: str, current_constraints: Optional[dict] = None) -> Optional[dict]:
-<<<<<<< HEAD
     """Sử dụng Google GenAI API để trích xuất ràng buộc theo schema mới. Trả về None nếu không khả dụng."""
-=======
-    """Sử dụng Google GenAI API để trích xuất ràng buộc. Trả về None nếu không khả dụng."""
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
     try:
         context_str = ""
         if current_constraints:
@@ -220,7 +185,6 @@ def extract_constraints_gemini(user_message: str, current_constraints: Optional[
         
         data = json.loads(raw_text)
 
-<<<<<<< HEAD
         constraints = []
         for c in data.get("constraints", []):
             if isinstance(c, dict) and "field" in c and "operator" in c and "value" in c:
@@ -249,25 +213,6 @@ def extract_constraints_gemini(user_message: str, current_constraints: Optional[
             "constraints": constraints,
             "preferences": preferences,
             "required_tags": required_tags,
-=======
-        # Sanitize output
-        req_discrete = data.get("require_discrete_gpu")
-        if req_discrete is not None:
-            req_discrete = bool(req_discrete)
-
-        gpu_kw = data.get("gpu_keyword")
-        if gpu_kw is not None:
-            gpu_kw = str(gpu_kw).strip() if str(gpu_kw).strip() else None
-
-        return {
-            "max_price": float(data["max_price"]) if data.get("max_price") is not None else None,
-            "min_price": float(data["min_price"]) if data.get("min_price") is not None else None,
-            "max_weight": float(data["max_weight"]) if data.get("max_weight") is not None else None,
-            "min_battery": float(data["min_battery"]) if data.get("min_battery") is not None else None,
-            "require_discrete_gpu": req_discrete,
-            "gpu_keyword": gpu_kw,
-            "required_tags": [tag for tag in data.get("required_tags", []) if isinstance(tag, str)],
->>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
         }
     except Exception as e:
         print(f"[Google GenAI NLP Error] Lỗi trích xuất ({e}), chuyển sang fallback.")
