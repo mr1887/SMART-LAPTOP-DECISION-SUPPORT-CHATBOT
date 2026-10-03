@@ -26,10 +26,11 @@ else:
 
 _client = None
 DEFAULT_MODELS = [
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-1.5-flash"
-    
+    "gemini-1.5-flash",
 ]
 
 
@@ -96,32 +97,70 @@ def _generate_with_fallback(prompt: str, config: Optional[dict] = None) -> Optio
 # ==============================================================================
 EXTRACTION_SYSTEM_PROMPT = """
 Bạn là bộ phân tích ngôn ngữ tự nhiên cho chatbot tư vấn chọn laptop.
-Nhiệm vụ của bạn là đọc tin nhắn người dùng (tiếng Việt) và trích xuất các ràng buộc kỹ thuật.
+Nhiệm vụ của bạn là đọc tin nhắn người dùng (tiếng Việt) và trích xuất các ràng buộc (constraints), sở thích (preferences) và nhãn nhu cầu (required_tags).
 
-Các trường cần trích xuất (trả về đúng định dạng JSON):
-- max_price: (số thực hoặc null) Ngân sách tối đa tính theo VNĐ. (VD: 20 triệu -> 20000000, 15tr -> 15000000, 25 củ -> 25000000).
-- min_price: (số thực hoặc null) Ngân sách tối thiểu tính theo VNĐ.
-- max_weight: (số thực hoặc null) Cân nặng tối đa tính theo Kilogram (kg). (VD: 1.5kg -> 1.5, nhẹ dưới 2 cân -> 2.0).
-- min_battery: (số thực hoặc null) Thời lượng pin tối thiểu tính theo PHÚT. (VD: 6 tiếng -> 360, 8h -> 480).
-- require_discrete_gpu: (boolean hoặc null)
-    + true: Người dùng yêu cầu máy phải có CARD ĐỒ HỌA RỜI / GPU RỜI (discrete GPU), card NVIDIA, RTX, GTX, hoặc chơi game nặng/đồ họa 3D cần card rời.
-    + false: Người dùng yêu cầu card onboard / card tích hợp, hoặc ghi rõ không cần card rời.
-    + null: Người dùng không đề cập hoặc không có yêu cầu cụ thể về loại card.
-- gpu_keyword: (chuỗi hoặc null) Dòng GPU cụ thể mà người dùng yêu cầu (VD: "RTX 4060", "RTX 4050", "RTX 3050", "RTX 4070", "RTX 5060", "RTX", "GTX", "NVIDIA", "Radeon", "Intel Arc", "Apple M4"...). Nếu không yêu cầu model GPU cụ thể, trả về null.
-- required_tags: (danh sách chuỗi) Các nhãn nhu cầu được chọn từ 4 nhãn chuẩn sau:
-    + "is_gaming_friendly" (chơi game, esport, fps, cấu hình mạnh...)
-    + "is_programming_friendly" (lập trình, code, dev, IT, CNTT, chạy máy ảo...)
-    + "is_graphic_friendly" (đồ họa, photoshop, render, 3d, kiến trúc, video...)
-    + "is_office_friendly" (văn phòng, word, excel, học sinh, sinh viên, mỏng nhẹ...)
+CÁC TRƯỜNG ĐƯỢC PHÉP (allowed fields):
+- price: Ngân sách tính theo VNĐ đầy đủ (VD: 20 triệu -> 20000000, 15tr -> 15000000, 25 củ -> 25000000).
+- ram_gb: Dung lượng RAM tính theo GB (VD: 16GB -> 16, 32GB -> 32).
+- storage_gb: Dung lượng ổ cứng tính theo GB (VD: 512GB -> 512, 1TB -> 1024).
+- weight_kg: Trọng lượng máy tính theo kg (VD: 1.5kg -> 1.5, dưới 2kg -> 2.0).
+- battery_minutes: Thời lượng pin tính theo PHÚT (VD: 6 tiếng -> 360, 8h -> 480).
+- gpu_discrete: Boolean (true nếu cần card rời/GPU rời NVIDIA, RTX, GTX; false nếu card tích hợp).
+- gpu_keyword: Tên dòng GPU cụ thể nếu có (VD: "RTX 4060", "RTX 3050", "RTX 4070", "M4"...).
+
+QUY TẮC PHÂN LOẠI SEMANTIC:
+1. Ràng buộc (constraints):
+   - operator: chỉ một trong các toán tử "<=", ">=", "="
+   - type:
+     + "hard": Các từ khóa thể hiện tính bắt buộc, giới hạn cứng: "bắt buộc", "không quá", "ít nhất", "phải có", "tối đa", "tối thiểu", "dưới", "trên".
+       (VD: "bắt buộc dưới 20 triệu" -> field: price, operator: "<=", value: 20000000, type: "hard")
+       (VD: "RAM ít nhất 16GB" -> field: ram_gb, operator: ">=", value: 16, type: "hard")
+       (VD: "SSD ít nhất 512GB" -> field: storage_gb, operator: ">=", value: 512, type: "hard")
+     + "soft": Các từ khóa ước lượng, mềm dẻo: "tầm", "khoảng", "tầm khoảng", "xung quanh", "nếu được".
+       (VD: "tầm 20 triệu" -> field: price, operator: "<=", value: 20000000, type: "soft")
+   - source_text: Trích xuất chính xác đoạn văn bản gốc tương ứng của người dùng.
+
+2. Sở thích tối ưu (preferences):
+   - direction: "minimize", "maximize", "prefer"
+   - Sử dụng khi người dùng muốn tối ưu hóa nhưng không đặt ngưỡng cứng cụ thể:
+     + "càng nhẹ càng tốt", "ưu tiên mỏng nhẹ" -> field: "weight_kg", direction: "minimize"
+     + "càng rẻ càng tốt", "tiết kiệm nhất có thể" -> field: "price", direction: "minimize"
+     + "pin càng trâu càng tốt", "ưu tiên pin lâu" -> field: "battery_minutes", direction: "maximize"
+     + "ưu tiên RAM nhiều", "RAM càng to càng tốt" -> field: "ram_gb", direction: "maximize"
+   - source_text: Trích xuất chính xác đoạn văn bản gốc tương ứng.
+
+3. Nhãn nhu cầu (required_tags):
+   - Chọn từ các tag chuẩn: "is_gaming_friendly", "is_programming_friendly", "is_graphic_friendly", "is_office_friendly".
+
+ĐỊNH DẠNG JSON ĐẦU RA BẮT BUỘC:
+{
+  "constraints": [
+    {
+      "field": "price|ram_gb|storage_gb|weight_kg|battery_minutes|gpu_discrete|gpu_keyword",
+      "operator": "<=|>=|=",
+      "value": 20000000,
+      "type": "hard|soft",
+      "source_text": "tầm 20 triệu"
+    }
+  ],
+  "preferences": [
+    {
+      "field": "weight_kg|price|battery_minutes|ram_gb|storage_gb",
+      "direction": "minimize|maximize|prefer",
+      "source_text": "càng nhẹ càng tốt"
+    }
+  ],
+  "required_tags": ["is_gaming_friendly"]
+}
 
 QUY TẮC QUAN TRỌNG:
-- Chỉ trả về duy nhất 1 JSON object hợp lệ, không kèm theo bất kỳ văn bản giải thích nào khác.
-- Nếu không tìm thấy ràng buộc nào, để giá trị là null hoặc [] cho required_tags.
+- Chỉ trả về duy nhất 1 JSON object hợp lệ, không kèm theo bất kỳ văn bản giải thích nào khác ngoài JSON.
+- Nếu không có ràng buộc/sở thích nào, trả về danh sách rỗng [] cho các trường.
 """
 
 
 def extract_constraints_gemini(user_message: str, current_constraints: Optional[dict] = None) -> Optional[dict]:
-    """Sử dụng Google GenAI API để trích xuất ràng buộc. Trả về None nếu không khả dụng."""
+    """Sử dụng Google GenAI API để trích xuất ràng buộc theo schema mới. Trả về None nếu không khả dụng."""
     try:
         context_str = ""
         if current_constraints:
@@ -146,23 +185,34 @@ def extract_constraints_gemini(user_message: str, current_constraints: Optional[
         
         data = json.loads(raw_text)
 
-        # Sanitize output
-        req_discrete = data.get("require_discrete_gpu")
-        if req_discrete is not None:
-            req_discrete = bool(req_discrete)
+        constraints = []
+        for c in data.get("constraints", []):
+            if isinstance(c, dict) and "field" in c and "operator" in c and "value" in c:
+                constraints.append({
+                    "field": c.get("field"),
+                    "operator": c.get("operator"),
+                    "value": c.get("value"),
+                    "type": c.get("type", "hard"),
+                    "source_text": c.get("source_text"),
+                })
 
-        gpu_kw = data.get("gpu_keyword")
-        if gpu_kw is not None:
-            gpu_kw = str(gpu_kw).strip() if str(gpu_kw).strip() else None
+        preferences = []
+        for p in data.get("preferences", []):
+            if isinstance(p, dict) and "field" in p and "direction" in p:
+                preferences.append({
+                    "field": p.get("field"),
+                    "direction": p.get("direction"),
+                    "source_text": p.get("source_text"),
+                })
+
+        required_tags = [
+            tag for tag in data.get("required_tags", []) if isinstance(tag, str)
+        ]
 
         return {
-            "max_price": float(data["max_price"]) if data.get("max_price") is not None else None,
-            "min_price": float(data["min_price"]) if data.get("min_price") is not None else None,
-            "max_weight": float(data["max_weight"]) if data.get("max_weight") is not None else None,
-            "min_battery": float(data["min_battery"]) if data.get("min_battery") is not None else None,
-            "require_discrete_gpu": req_discrete,
-            "gpu_keyword": gpu_kw,
-            "required_tags": [tag for tag in data.get("required_tags", []) if isinstance(tag, str)],
+            "constraints": constraints,
+            "preferences": preferences,
+            "required_tags": required_tags,
         }
     except Exception as e:
         print(f"[Google GenAI NLP Error] Lỗi trích xuất ({e}), chuyển sang fallback.")

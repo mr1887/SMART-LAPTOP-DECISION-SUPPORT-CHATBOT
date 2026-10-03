@@ -1,8 +1,8 @@
 """
-Tầng 2 - LightGBM Scoring: Dự đoán AI_Score cho từng laptop.
+Tầng 2 - LightGBM Scoring: Dự đoán engagement-based relevance score cho từng laptop.
 
 Load model đã train từ model.pkl, nhận DataFrame laptop, trả về DataFrame
-có thêm cột AI_Score trong khoảng [0, 1].
+có thêm cột relevance_score (và AI_Score để tương thích ngược) trong khoảng [0, 1].
 """
 
 import pickle
@@ -38,14 +38,14 @@ def _load_model():
 
 
 def predict(df: pd.DataFrame) -> pd.DataFrame:
-    """Dự đoán AI_Score cho toàn bộ laptop trong DataFrame.
+    """Dự đoán engagement-based relevance score cho toàn bộ laptop trong DataFrame.
 
     Args:
         df: DataFrame laptop có đủ cột feature (price, laptop_weight, ...)
             Các cột thiếu sẽ được điền 0/False để tránh lỗi.
 
     Returns:
-        DataFrame gốc với cột AI_Score được thêm/cập nhật (giá trị [0, 1]).
+        DataFrame gốc với cột relevance_score và AI_Score được thêm/cập nhật (giá trị [0, 1]).
     """
     _load_model()
 
@@ -63,7 +63,8 @@ def predict(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype("category")
 
     raw_pred = _model.predict(df[_feature_cols])
-    df["AI_Score"] = np.clip(raw_pred, 0, 1)
+    df["relevance_score"] = np.clip(raw_pred, 0, 1)
+    df["AI_Score"] = df["relevance_score"]
 
     return df
 
@@ -72,3 +73,4 @@ def get_feature_cols() -> list[str]:
     """Trả về danh sách feature columns model đang dùng."""
     _load_model()
     return list(_feature_cols)
+

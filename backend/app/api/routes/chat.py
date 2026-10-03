@@ -10,18 +10,22 @@ Flow mỗi lượt chat:
     6. Trả về kết quả + câu trả lời tự nhiên
 """
 
+import os
 import uuid
 import urllib.parse
-import uuid
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.nlp import nl2constraint
-from app.optimizer import solver
 from app.session import session_manager
+
+# Chế độ sinh lời giải thích tư vấn ("template" | "gemini").
+# Default: "template" (dùng verified laptop_details và solver result, không gọi Gemini lần 2 để đo API usage).
+EXPLANATION_MODE: Literal["template", "gemini"] = os.getenv("EXPLANATION_MODE", "template").lower()
 
 router = APIRouter()
 
@@ -225,6 +229,11 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
     if price_vnd and price_vnd > 0:
         price_note = ""
         max_p = constraints.get("max_price")
+        if max_p is None and "constraints" in constraints:
+            for c in constraints.get("constraints", []):
+                if c.get("field") == "price" and c.get("op") == "<=":
+                    max_p = c.get("value")
+                    break
         if is_relaxed and max_p and price_vnd > max_p:
             diff = price_vnd - max_p
             price_note = f" *(Vượt ngân sách {diff:,.0f} VNĐ)*"
@@ -258,6 +267,17 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
     footer = "\n\n*Bạn thấy mẫu máy này thế nào? Nếu muốn đổi tầm giá, hãng máy hoặc cấu hình khác, hãy nói cho mình biết nhé!*"
 
     return f"{header}\n\n{specs_str}{media_info}{footer}"
+
+
+def _sanitize_for_json(obj):
+    """Chuyển đổi các kiểu dữ liệu NumPy / Pandas sang kiểu chuẩn của Python để Pydantic serialize JSON an toàn."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    elif hasattr(obj, "item"):
+        return obj.item()
+    return obj
 
 
 # ---------- Endpoint ----------
@@ -359,26 +379,49 @@ def chat(req: ChatRequest):
         )
 
     # D. Ý định TÌM KIẾM / LỌC LAPTOP (SEARCH)
-    merged_constraints = session_manager.merge_constraints(old_constraints, new_delta)
+    try:
+        from app.recommendation.pipeline import recommend
+        rec_res = recommend(
+            query=req.message,
+            current_constraints=old_constraints,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi recommendation pipeline: {e}")
 
-    has_any_constraint = any(
-        v is not None and v != [] and v
-        for v in merged_constraints.values()
-    )
+    rec_res = _sanitize_for_json(rec_res)
+    merged_constraints = rec_res.get("requirements", {})
+    opt = rec_res.get("optimization", {})
+    laptop_id = int(opt["laptop_id"]) if opt.get("laptop_id") is not None else None
+    rel_score = float(opt["relevance_score"]) if opt.get("relevance_score") is not None else None
+    has_soft_v = bool(opt.get("has_soft_violation", False))
+    soft_vs = opt.get("soft_violations", [])
+    violations = [v["violation"] for v in soft_vs] if soft_vs else []
+    violation_text = ", ".join(violations) if violations else ""
 
-    result = None
-    df = None
+    result = {
+        "laptop_id": laptop_id,
+        "is_feasible": bool(opt.get("is_feasible")) and not has_soft_v,
+        "is_relaxed": has_soft_v,
+        "relevance_score": rel_score,
+        "ai_score": rel_score,  # map sang ai_score legacy cho frontend
+        "violations": violations,
+        "violation_text": violation_text,
+        "status": opt.get("status"),
+        "hard_violations": opt.get("hard_violations", []),
+        "soft_violations": soft_vs,
+    }
+
     laptop_details = None
-
-    if has_any_constraint:
+    if laptop_id is not None:
         try:
             df = _load_scored_df()
-            result = solver.solve(merged_constraints, df, backend="gurobi")
-            laptop_details = _get_laptop_details(df, result.get("laptop_id"))
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=503, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Lỗi solver: {e}")
+            laptop_details = _get_laptop_details(df, laptop_id)
+            if laptop_details is not None:
+                laptop_details = _sanitize_for_json(laptop_details)
+        except Exception:
+            pass
 
     # Lưu lại session
     session_manager.save_state(session_id, {
@@ -386,9 +429,9 @@ def chat(req: ChatRequest):
         "last_laptop_details": laptop_details or last_laptop_details,
     })
 
-    # Xây dựng câu trả lời tư vấn chuyên sâu
+    # Xây dựng câu trả lời tư vấn
     reply = None
-    if result is not None:
+    if EXPLANATION_MODE == "gemini" and result.get("laptop_id") is not None:
         try:
             from app.ai.gemini_service import generate_gemini_consultation
             reply = generate_gemini_consultation(

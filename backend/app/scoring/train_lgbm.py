@@ -1,11 +1,11 @@
 """
-Tầng 2 - LightGBM Scoring.
-Train model dự đoán AI_Score (độ hấp dẫn/phù hợp) cho từng laptop, dựa trên
-thông số phần cứng + nhãn auto-tag + tín hiệu hành vi (engagement).
+Tầng 2 - LightGBM Scoring (Engagement-based Relevance Regression).
+Train model LGBMRegressor dự đoán engagement-based relevance score cho từng laptop, dựa trên
+thông số phần cứng + nhãn auto-tag + proxy target từ implicit engagement (KHÔNG phải Learning-to-Rank).
 
 QUAN TRỌNG - Định nghĩa target:
-Vì không có nhãn "độ hấp dẫn" trực tiếp, ta dùng ENGAGEMENT SCORE (tự tổng
-hợp từ user_event_tracking) làm proxy target để train:
+Vì không có nhãn relevance/độ phù hợp trực tiếp, ta dùng ENGAGEMENT SCORE (tự tổng
+hợp từ user_event_tracking) làm proxy target để train mô hình hồi quy:
     engagement_score = total_pageview + 0.5*total_load_more + 1.5*total_search_hit
                        + 2*total_add_to_compare + 2.5*total_select_compare
 Trọng số ưu tiên "compare" cao nhất vì đây là hành vi cân nhắc kỹ trước khi
@@ -19,9 +19,7 @@ Input:
 
 Output:
     - backend/app/scoring/model.pkl                  (model đã train)
-    - data/processed/laptop_dataset_scored.csv        (toàn bộ laptop kèm AI_Score)
-
-
+    - data/processed/laptop_dataset_scored.csv        (toàn bộ laptop kèm relevance score / AI_Score)
 """
 
 import argparse
@@ -134,7 +132,7 @@ def load_data(dataset_path: Path, engagement_path: Path) -> pd.DataFrame:
 
 def build_target(df: pd.DataFrame) -> pd.DataFrame:
     """Tính engagement_score thô, rồi chuẩn hóa log + min-max về [0,1]
-    làm target AI_Score cho model học theo."""
+    làm proxy target (engagement-based relevance score) cho model regression học theo."""
     missing_cols = [col for col in ENGAGEMENT_WEIGHTS if col not in df.columns]
     if missing_cols:
         available_engagement_like = [
@@ -287,7 +285,7 @@ def train_model(df: pd.DataFrame, feature_cols: list[str]) -> tuple[lgb.LGBMRegr
 
 
 def score_all_laptops(model: lgb.LGBMRegressor, df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    """Dự đoán AI_Score cho TOÀN BỘ laptop (kể cả những máy dùng để train) -
+    """Dự đoán engagement-based relevance score cho TOÀN BỘ laptop (lưu vào cột AI_Score để tương thích ngược) -
     đây là điểm cuối cùng gắn vào từng laptop cho Gurobi/PuLP sử dụng."""
     raw_pred = model.predict(df[feature_cols])
     # Ép về đúng khoảng [0,1] vì regression có thể dự đoán vượt biên nhẹ

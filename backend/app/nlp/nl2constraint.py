@@ -113,6 +113,51 @@ def _parse_battery(text: str) -> Optional[float]:
     return None
 
 
+def _parse_ram(text: str) -> Optional[float]:
+    """Trích dung lượng RAM tối thiểu (GB)."""
+    text_lower = text.lower()
+    patterns = [
+        # VD: "RAM 16GB", "RAM tối thiểu 32GB", "RAM ít nhất 16GB", "RAM 16"
+        r"\b(?:ram|bộ\s*nhớ\s*ram)(?:\s+(?:ít\s+nhất|tối\s+thiểu|từ|trên|không\s+dưới|>=))?\s*(\d+(?:[.,]\d+)?)\s*(?:gb|g)?\b",
+        # VD: "16GB RAM", "ít nhất 16GB RAM", "tối thiểu 32GB RAM"
+        r"(?:(?:ít\s+nhất|tối\s+thiểu|từ|trên|không\s+dưới|>=)\s*)?(\d+(?:[.,]\d+)?)\s*(?:gb|g)?\s*ram\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text_lower)
+        if m:
+            val = float(m.group(1).replace(",", "."))
+            if 4 <= val <= 256:
+                return val
+    return None
+
+
+def _parse_storage(text: str) -> Optional[float]:
+    """Trích dung lượng lưu trữ / SSD / HDD tối thiểu và quy về GB (1TB = 1024GB)."""
+    text_lower = text.lower()
+    patterns = [
+        # VD: "SSD 512GB", "ổ cứng 1TB", "SSD tối thiểu 512GB", "ổ cứng ít nhất 1TB"
+        r"\b(?:ssd|hdd|ổ\s*cứng|ổ\s*ssd|storage|nvme|rom)(?:\s+(?:ít\s+nhất|tối\s+thiểu|từ|trên|không\s+dưới|>=))?\s*(\d+(?:[.,]\d+)?)\s*(tb|t|gb|g)?\b",
+        # VD: "ít nhất 1TB SSD", "512GB SSD", "1TB ổ cứng"
+        r"(?:(?:ít\s+nhất|tối\s+thiểu|từ|trên|không\s+dưới|>=)\s*)?(\d+(?:[.,]\d+)?)\s*(tb|t|gb|g)\s*(?:ssd|hdd|ổ\s*cứng|nvme|storage|rom)\b",
+        # VD: "1TB", "ít nhất 1TB" (đơn vị TB mặc định là storage)
+        r"\b(?:ít\s+nhất|tối\s+thiểu|từ|trên|không\s+dưới|>=)?\s*(\d+(?:[.,]\d+)?)\s*(tb|t)\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text_lower)
+        if m:
+            val = float(m.group(1).replace(",", "."))
+            unit = (m.group(2) or "").lower()
+            if unit in ["tb", "t"]:
+                return val * 1024
+            elif unit in ["gb", "g"]:
+                return val
+            else:
+                if val <= 8:
+                    return val * 1024
+                return val
+    return None
+
+
 def _extract_price_constraints(text: str) -> tuple[Optional[float], Optional[float]]:
     """Trích max_price và min_price từ câu hỏi.
 
@@ -154,6 +199,9 @@ def _extract_price_constraints(text: str) -> tuple[Optional[float], Optional[flo
         if m:
             val = float(m.group(1).replace(",", "."))
             unit = m.group(2) or ""
+            # Bỏ qua nếu phía sau là đơn vị của RAM, SSD, pin, cân nặng...
+            if not unit and re.search(r"^\s*(?:gb|tb|kg|h|giờ|tiếng|ram|ssd|hdd|in|inch|cm)", text_lower[m.end():]):
+                continue
             min_price = val * _CURRENCY_UNITS.get(unit, 1_000_000 if val < 1000 else 1)
             break
 
@@ -276,6 +324,8 @@ def parse_regex(text: str) -> dict:
     max_price, min_price = _extract_price_constraints(text)
     max_weight = _parse_weight(text)
     min_battery = _parse_battery(text)
+    min_ram = _parse_ram(text)
+    min_storage = _parse_storage(text)
     require_discrete_gpu, gpu_keyword = _extract_gpu_constraints(text)
     required_tags = _extract_tags(text)
 
@@ -284,6 +334,8 @@ def parse_regex(text: str) -> dict:
         "min_price": min_price,
         "max_weight": max_weight,
         "min_battery": min_battery,
+        "min_ram": min_ram,
+        "min_storage": min_storage,
         "require_discrete_gpu": require_discrete_gpu,
         "gpu_keyword": gpu_keyword,
         "required_tags": required_tags,
@@ -324,33 +376,138 @@ def detect_intent(text: str, has_extracted_constraints: bool = False) -> str:
     return "SMALLTALK"
 
 
+def convert_legacy_regex_to_requirement_set(legacy_data: dict, text: str = "") -> dict:
+    """Chuyển đổi kết quả trích xuất từ regex cũ sang schema RequirementSet mới."""
+    from app.nlp.validator import validate_requirement_set
+
+    text_lower = text.lower() if text else ""
+    constraints = []
+
+    # 1. Price constraints
+    max_price = legacy_data.get("max_price")
+    if max_price is not None:
+        if any(kw in text_lower for kw in ["tầm", "khoảng", "ngân sách", "budget", "xung quanh"]):
+            price_type = "soft"
+        else:
+            price_type = "hard"
+
+        constraints.append({
+            "field": "price",
+            "operator": "<=",
+            "value": max_price,
+            "type": price_type,
+            "source_text": text or None,
+        })
+
+    min_price = legacy_data.get("min_price")
+    if min_price is not None:
+        constraints.append({
+            "field": "price",
+            "operator": ">=",
+            "value": min_price,
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    # 2. Weight constraint (explicit threshold -> hard mặc định)
+    max_weight = legacy_data.get("max_weight")
+    if max_weight is not None:
+        constraints.append({
+            "field": "weight_kg",
+            "operator": "<=",
+            "value": max_weight,
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    # 3. Battery constraint (explicit minimum -> hard)
+    min_battery = legacy_data.get("min_battery")
+    if min_battery is not None:
+        constraints.append({
+            "field": "battery_minutes",
+            "operator": ">=",
+            "value": min_battery,
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    # 4. RAM constraint (explicit minimum -> hard)
+    min_ram = legacy_data.get("min_ram")
+    if min_ram is not None:
+        constraints.append({
+            "field": "ram_gb",
+            "operator": ">=",
+            "value": min_ram,
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    # 5. Storage constraint (explicit minimum -> hard)
+    min_storage = legacy_data.get("min_storage")
+    if min_storage is not None:
+        constraints.append({
+            "field": "storage_gb",
+            "operator": ">=",
+            "value": min_storage,
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    # 6. GPU constraints
+    req_discrete = legacy_data.get("require_discrete_gpu")
+    if req_discrete is not None:
+        constraints.append({
+            "field": "gpu_discrete",
+            "operator": "=",
+            "value": bool(req_discrete),
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    gpu_kw = legacy_data.get("gpu_keyword")
+    if gpu_kw:
+        constraints.append({
+            "field": "gpu_keyword",
+            "operator": "=",
+            "value": str(gpu_kw).strip(),
+            "type": "hard",
+            "source_text": text or None,
+        })
+
+    raw_output = {
+        "constraints": constraints,
+        "preferences": [],
+        "required_tags": legacy_data.get("required_tags", []),
+    }
+
+    validated = validate_requirement_set(raw_output)
+    return validated.model_dump()
+
+
 def parse(text: str, use_gemini: bool = True) -> dict:
-    """Hàm chính: nhận câu tiếng Việt → dict ràng buộc.
-    Ưu tiên dùng Google Gemini (nếu có API Key), tự động fallback về Regex nếu lỗi hoặc không có Key.
+    """Hàm chính: nhận câu tiếng Việt → dict ràng buộc theo schema mới (RequirementSet).
+    Ưu tiên dùng Google Gemini (nếu có API Key), tự động fallback về Regex nếu lỗi hoặc output invalid.
 
     Args:
         text: Câu hỏi/yêu cầu của người dùng.
         use_gemini: Cho phép dùng Gemini hay không (mặc định True).
 
     Returns:
-        dict với các key:
-            max_price            (float | None)  - ngân sách tối đa (VNĐ)
-            min_price            (float | None)  - ngân sách tối thiểu (VNĐ)
-            max_weight           (float | None)  - cân nặng tối đa (kg)
-            min_battery          (float | None)  - thời lượng pin tối thiểu (phút)
-            require_discrete_gpu (bool | None)   - bắt buộc có card rời (True/False/None)
-            gpu_keyword          (str | None)    - từ khóa / model GPU cụ thể
-            required_tags        (list[str])     - danh sách tag nhu cầu
+        dict định dạng RequirementSet (constraints, preferences, required_tags).
     """
     if use_gemini:
         try:
             from app.ai.gemini_service import extract_constraints_gemini
+            from app.nlp.validator import validate_requirement_set
             gemini_result = extract_constraints_gemini(text)
-            if gemini_result is not None:
-                return gemini_result
+            if gemini_result and isinstance(gemini_result, dict):
+                validated = validate_requirement_set(gemini_result)
+                return validated.model_dump()
         except Exception:
             pass
 
-    return parse_regex(text)
+    legacy_res = parse_regex(text)
+    return convert_legacy_regex_to_requirement_set(legacy_res, text=text)
+
 
 
