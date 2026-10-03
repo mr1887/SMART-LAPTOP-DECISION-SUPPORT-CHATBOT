@@ -199,9 +199,12 @@ def _extract_price_constraints(text: str) -> tuple[Optional[float], Optional[flo
         if m:
             val = float(m.group(1).replace(",", "."))
             unit = m.group(2) or ""
+<<<<<<< HEAD
             # Bỏ qua nếu phía sau là đơn vị của RAM, SSD, pin, cân nặng...
             if not unit and re.search(r"^\s*(?:gb|tb|kg|h|giờ|tiếng|ram|ssd|hdd|in|inch|cm)", text_lower[m.end():]):
                 continue
+=======
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
             min_price = val * _CURRENCY_UNITS.get(unit, 1_000_000 if val < 1000 else 1)
             break
 
@@ -324,8 +327,11 @@ def parse_regex(text: str) -> dict:
     max_price, min_price = _extract_price_constraints(text)
     max_weight = _parse_weight(text)
     min_battery = _parse_battery(text)
+<<<<<<< HEAD
     min_ram = _parse_ram(text)
     min_storage = _parse_storage(text)
+=======
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
     require_discrete_gpu, gpu_keyword = _extract_gpu_constraints(text)
     required_tags = _extract_tags(text)
 
@@ -334,8 +340,11 @@ def parse_regex(text: str) -> dict:
         "min_price": min_price,
         "max_weight": max_weight,
         "min_battery": min_battery,
+<<<<<<< HEAD
         "min_ram": min_ram,
         "min_storage": min_storage,
+=======
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
         "require_discrete_gpu": require_discrete_gpu,
         "gpu_keyword": gpu_keyword,
         "required_tags": required_tags,
@@ -376,6 +385,7 @@ def detect_intent(text: str, has_extracted_constraints: bool = False) -> str:
     return "SMALLTALK"
 
 
+<<<<<<< HEAD
 def convert_legacy_regex_to_requirement_set(legacy_data: dict, text: str = "") -> dict:
     """Chuyển đổi kết quả trích xuất từ regex cũ sang schema RequirementSet mới."""
     from app.nlp.validator import validate_requirement_set
@@ -487,17 +497,34 @@ def convert_legacy_regex_to_requirement_set(legacy_data: dict, text: str = "") -
 def parse(text: str, use_gemini: bool = True) -> dict:
     """Hàm chính: nhận câu tiếng Việt → dict ràng buộc theo schema mới (RequirementSet).
     Ưu tiên dùng Google Gemini (nếu có API Key), tự động fallback về Regex nếu lỗi hoặc output invalid.
+=======
+def parse(text: str, use_gemini: bool = True) -> dict:
+    """Hàm chính: nhận câu tiếng Việt → dict ràng buộc.
+    Ưu tiên dùng Google Gemini (nếu có API Key), tự động fallback về Regex nếu lỗi hoặc không có Key.
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 
     Args:
         text: Câu hỏi/yêu cầu của người dùng.
         use_gemini: Cho phép dùng Gemini hay không (mặc định True).
 
     Returns:
+<<<<<<< HEAD
         dict định dạng RequirementSet (constraints, preferences, required_tags).
+=======
+        dict với các key:
+            max_price            (float | None)  - ngân sách tối đa (VNĐ)
+            min_price            (float | None)  - ngân sách tối thiểu (VNĐ)
+            max_weight           (float | None)  - cân nặng tối đa (kg)
+            min_battery          (float | None)  - thời lượng pin tối thiểu (phút)
+            require_discrete_gpu (bool | None)   - bắt buộc có card rời (True/False/None)
+            gpu_keyword          (str | None)    - từ khóa / model GPU cụ thể
+            required_tags        (list[str])     - danh sách tag nhu cầu
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
     """
     if use_gemini:
         try:
             from app.ai.gemini_service import extract_constraints_gemini
+<<<<<<< HEAD
             from app.nlp.validator import validate_requirement_set
             gemini_result = extract_constraints_gemini(text)
             if gemini_result and isinstance(gemini_result, dict):
@@ -509,5 +536,14 @@ def parse(text: str, use_gemini: bool = True) -> dict:
     legacy_res = parse_regex(text)
     return convert_legacy_regex_to_requirement_set(legacy_res, text=text)
 
+=======
+            gemini_result = extract_constraints_gemini(text)
+            if gemini_result is not None:
+                return gemini_result
+        except Exception:
+            pass
+
+    return parse_regex(text)
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 
 

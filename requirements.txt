@@ -12,5 +12,8 @@ gurobipy>=11.0.0
 google-genai>=0.1.1
 python-dotenv>=1.0.0
 firebase-admin>=6.5.0
+<<<<<<< HEAD
 ortools>=9.9.0
 
+=======
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b

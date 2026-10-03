@@ -19,7 +19,13 @@ Input:
 
 Output:
     - backend/app/scoring/model.pkl                  (model đã train)
+<<<<<<< HEAD
     - data/processed/laptop_dataset_scored.csv        (toàn bộ laptop kèm relevance score / AI_Score)
+=======
+    - data/processed/laptop_dataset_scored.csv        (toàn bộ laptop kèm AI_Score)
+
+
+>>>>>>> 15d129868112dc767e523cf4ca15bbace551095b
 """
 
 import argparse
