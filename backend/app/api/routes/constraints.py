@@ -39,7 +39,7 @@ def _load_scored_df() -> pd.DataFrame:
     csv_path = _find_scored_csv()
     if not csv_path.exists():
         raise FileNotFoundError(
-            f"Không tìm thấy {_SCORED_CSV}. "
+            f"Không tìm thấy {csv_path}. "
             "Hãy chạy `python backend/app/scoring/train_lgbm.py` trước."
         )
     _df_cache = pd.read_csv(csv_path)
@@ -86,7 +86,7 @@ def solve_with_constraints(req: ConstraintRequest):
 
         result = {
             "laptop_id": opt_res.get("laptop_id"),
-            "is_feasible": bool(opt_res.get("is_feasible")) and not has_soft_v,
+            "is_feasible": bool(opt_res.get("is_feasible")),
             "is_relaxed": has_soft_v,
             "ai_score": opt_res.get("relevance_score"),
             "relevance_score": opt_res.get("relevance_score"),

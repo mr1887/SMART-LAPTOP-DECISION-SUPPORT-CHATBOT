@@ -47,7 +47,7 @@ def retrieve_candidates(
 ) -> pd.DataFrame:
     """
     Lọc các ứng viên thỏa mãn các ràng buộc CỨNG (hard constraints) an toàn trước khi tối ưu:
-    - Chỉ filter hard constraints (price, ram_gb, storage_gb, gpu_discrete, gpu_keyword).
+    - Chỉ filter hard constraints (price, ram_gb, storage_gb, weight_kg, battery_minutes, gpu_discrete, gpu_keyword).
     - Không filter soft constraints hay preferences.
     - Bỏ qua constraint và ghi warning nếu cột cần thiết không tồn tại trong DataFrame.
     """
