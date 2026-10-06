@@ -25,8 +25,28 @@ def constraint_satisfaction_rate(records: List[Union[Dict[str, Any], Any]]) -> f
 
 
 def constraint_violation_rate(records: List[Union[Dict[str, Any], Any]]) -> float:
-    """Tỷ lệ các truy vấn có vi phạm ràng buộc (1 - constraint_satisfaction_rate)."""
+    """Tỷ lệ các truy vấn vi phạm hard constraints (1 - constraint_satisfaction_rate)."""
     return 1.0 - constraint_satisfaction_rate(records)
+
+
+def soft_constraint_violation_rate(records: List[Union[Dict[str, Any], Any]]) -> float:
+    """Tỷ lệ các truy vấn có vi phạm soft constraint (0.0 .. 1.0)."""
+    df = _to_df(records)
+    if df.empty:
+        return 0.0
+    if "has_soft_violation" in df.columns:
+        return float(df["has_soft_violation"].astype(bool).mean())
+    if "soft_violation_count" in df.columns:
+        return float((df["soft_violation_count"] > 0).mean())
+    return 0.0
+
+
+def average_soft_violations(records: List[Union[Dict[str, Any], Any]]) -> float:
+    """Số lượng vi phạm soft constraint trung bình trên mỗi query."""
+    df = _to_df(records)
+    if df.empty or "soft_violation_count" not in df.columns:
+        return 0.0
+    return float(df["soft_violation_count"].mean())
 
 
 def product_hallucination_rate(
@@ -123,6 +143,8 @@ def compute_all_metrics(
         "sample_count": len(records),
         "constraint_satisfaction_rate": round(constraint_satisfaction_rate(records), 4),
         "constraint_violation_rate": round(constraint_violation_rate(records), 4),
+        "soft_constraint_violation_rate": round(soft_constraint_violation_rate(records), 4),
+        "average_soft_violations": round(average_soft_violations(records), 2),
         "product_hallucination_rate": round(product_hallucination_rate(records, catalog_product_names), 4),
         "average_llm_calls": round(average_llm_calls(records), 2),
         **tokens,

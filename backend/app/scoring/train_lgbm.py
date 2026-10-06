@@ -292,7 +292,7 @@ def train_model(df: pd.DataFrame, feature_cols: list[str]) -> tuple[lgb.LGBMRegr
 
 def score_all_laptops(model: lgb.LGBMRegressor, df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     """Dự đoán engagement-based relevance score cho TOÀN BỘ laptop (lưu vào cột AI_Score để tương thích ngược) -
-    đây là điểm cuối cùng gắn vào từng laptop cho Gurobi/PuLP sử dụng."""
+    đây là điểm cuối cùng gắn vào từng laptop cho OR-Tools CP-SAT Optimizer sử dụng."""
     raw_pred = model.predict(df[feature_cols])
     # Ép về đúng khoảng [0,1] vì regression có thể dự đoán vượt biên nhẹ
     df["AI_Score"] = np.clip(raw_pred, 0, 1)

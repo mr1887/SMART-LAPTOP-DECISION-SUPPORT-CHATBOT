@@ -2,6 +2,8 @@ from app.evaluation.logger import EvaluationLogger, ExperimentRecord, log_experi
 from app.evaluation.metrics import (
     constraint_satisfaction_rate,
     constraint_violation_rate,
+    soft_constraint_violation_rate,
+    average_soft_violations,
     product_hallucination_rate,
     average_llm_calls,
     average_tokens,
@@ -16,6 +18,8 @@ __all__ = [
     "load_experiments",
     "constraint_satisfaction_rate",
     "constraint_violation_rate",
+    "soft_constraint_violation_rate",
+    "average_soft_violations",
     "product_hallucination_rate",
     "average_llm_calls",
     "average_tokens",

@@ -1,6 +1,6 @@
 """
 Xử lý laptop_dataset.csv (đã có sẵn cột giá) thành laptop_dataset_tagged.csv
-sẵn sàng cho Tầng 2 (LightGBM) và Tầng 3 (Gurobi/PuLP).
+sẵn sàng cho Tầng 2 (LightGBM) và Tầng 3 (OR-Tools CP-SAT Optimizer).
 
 Dựa trên bảng missing-value thực tế đã kiểm tra:
 - Bỏ hẳn: laptop_gpu_note, laptop_cpu_note, foldable_opening_battery_result_minutes,
@@ -159,7 +159,7 @@ def select_final_columns(df: pd.DataFrame) -> pd.DataFrame:
         # Định danh
         "laptop_model_id", "laptop_name", "brand_name", "cpu_name", "gpu_name",
         "year_introduce",
-        # Ràng buộc cứng cho Gurobi/PuLP
+        # Ràng buộc cứng cho OR-Tools Optimizer
         "price", "laptop_weight", "battery_capacity_whr",
         "office_battery_minutes_final", "battery_source",
         "screen_size", "screen_ppi",
@@ -230,13 +230,13 @@ def main():
     df.to_csv(args.output, index=False, encoding="utf-8-sig")
     print(f"\nĐã lưu: {args.output} ({len(df)} dòng, {len(df.columns)} cột)")
 
-    # Cảnh báo cuối cùng nếu vẫn còn thiếu giá - chặn ràng buộc Gurobi
+    # Cảnh báo cuối cùng nếu vẫn còn thiếu giá - chặn ràng buộc OR-Tools
     if "price" in df.columns:
         no_price = df["price"].isna().sum()
         if no_price > 0:
             print(
                 f"\nCẢNH BÁO: {no_price} laptop vẫn chưa có giá. Các dòng này "
-                f"sẽ không tham gia được vào ràng buộc ngân sách của Gurobi/PuLP "
+                f"sẽ không tham gia được vào ràng buộc ngân sách của OR-Tools Solver "
                 f"trừ khi bổ sung thêm giá ước lượng (estimated_price)."
             )
 

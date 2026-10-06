@@ -11,7 +11,8 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.optimizer import solver
+from app.nlp.nl2constraint import convert_legacy_regex_to_requirement_set
+from app.optimizer.ortools_solver import solve as solve_ortools
 
 router = APIRouter()
 
@@ -55,14 +56,14 @@ class ConstraintRequest(BaseModel):
     require_discrete_gpu: bool | None = None
     gpu_keyword: str | None = None
     required_tags: list[str] = []
-    backend: str = "gurobi"
+    backend: str = "ortools"
 
 
 # ---------- Endpoint ----------
 
 @router.post("")
 def solve_with_constraints(req: ConstraintRequest):
-    """Gọi solver trực tiếp với bộ ràng buộc được cung cấp, trả về câu trả lời và thông tin chi tiết đầy đủ."""
+    """Gọi Google OR-Tools solver trực tiếp với bộ ràng buộc được cung cấp, trả về câu trả lời và thông tin chi tiết đầy đủ."""
     constraints = {
         "max_price":            req.max_price,
         "min_price":            req.min_price,
@@ -75,7 +76,26 @@ def solve_with_constraints(req: ConstraintRequest):
 
     try:
         df = _load_scored_df()
-        result = solver.solve(constraints, df, backend=req.backend)
+        req_set = convert_legacy_regex_to_requirement_set(constraints)
+        opt_res = solve_ortools(df, req_set)
+
+        has_soft_v = bool(opt_res.get("has_soft_violation", False))
+        soft_vs = opt_res.get("soft_violations", [])
+        violations = [v["violation"] for v in soft_vs] if soft_vs else []
+        violation_text = ", ".join(violations) if violations else ""
+
+        result = {
+            "laptop_id": opt_res.get("laptop_id"),
+            "is_feasible": bool(opt_res.get("is_feasible")) and not has_soft_v,
+            "is_relaxed": has_soft_v,
+            "ai_score": opt_res.get("relevance_score"),
+            "relevance_score": opt_res.get("relevance_score"),
+            "violations": violations,
+            "violation_text": violation_text,
+            "status": opt_res.get("status"),
+            "hard_violations": opt_res.get("hard_violations", []),
+            "soft_violations": soft_vs,
+        }
         
         # Import helper từ route chat để sinh câu trả lời đầy đủ & laptop_details
         from app.api.routes.chat import _get_laptop_details, _build_reply

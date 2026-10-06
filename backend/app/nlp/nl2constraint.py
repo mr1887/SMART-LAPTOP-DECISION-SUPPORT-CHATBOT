@@ -1,6 +1,6 @@
 """
 Tầng 1 - NL2Constraint: Chuyển đổi câu hỏi tiếng Việt tự nhiên thành
-bộ ràng buộc có cấu trúc để đưa vào Tầng 3 (Optimizer).
+bộ ràng buộc có cấu trúc để đưa vào Tầng 3 (OR-Tools CP-SAT Optimizer).
 
 Dùng Regex + từ điển keyword để trích xuất:
     - max_price / min_price (ngân sách)

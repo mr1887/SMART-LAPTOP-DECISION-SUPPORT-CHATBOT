@@ -1,5 +1,7 @@
 """
-Tầng 3 - Decision Support System (Gurobi/PuLP Optimizer).
+[Legacy/Comparison Solver] Tầng 3 - Decision Support System (Gurobi/PuLP Optimizer).
+File này được giữ lại để phục vụ đối chiếu, benchmark và kiểm thử so sánh với Google OR-Tools CP-SAT solver.
+LƯU Ý: Production pipeline hiện tại sử dụng `ortools_solver.py` (Google OR-Tools CP-SAT).
 
 Nhận: bộ ràng buộc (từ Tầng 1 NLP) + AI_Score cho từng laptop (từ Tầng 2
 LightGBM), trả về 1 laptop tối ưu tuân thủ 100% ràng buộc cứng, hoặc giải

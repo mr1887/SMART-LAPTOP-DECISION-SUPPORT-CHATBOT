@@ -134,6 +134,38 @@ def retrieve_candidates(
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering storage_gb ({e}), skipping constraint.")
 
+        elif c_field == "weight_kg":
+            col = _find_column(filtered_df, ["laptop_weight", "weight_kg", "weight"])
+            if col is None:
+                print("[CandidateRetriever Warning] Column for 'weight_kg' not found in DataFrame, skipping constraint.")
+                continue
+            try:
+                val_num = float(c_val)
+                if c_op == "<=":
+                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                elif c_op == ">=":
+                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                elif c_op == "=":
+                    filtered_df = filtered_df[filtered_df[col] == val_num]
+            except Exception as e:
+                print(f"[CandidateRetriever Warning] Error filtering weight_kg ({e}), skipping constraint.")
+
+        elif c_field == "battery_minutes":
+            col = _find_column(filtered_df, ["office_battery_minutes_final", "office_battery_result_minutes", "battery_minutes"])
+            if col is None:
+                print("[CandidateRetriever Warning] Column for 'battery_minutes' not found in DataFrame, skipping constraint.")
+                continue
+            try:
+                val_num = float(c_val)
+                if c_op == ">=":
+                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                elif c_op == "<=":
+                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                elif c_op == "=":
+                    filtered_df = filtered_df[filtered_df[col] == val_num]
+            except Exception as e:
+                print(f"[CandidateRetriever Warning] Error filtering battery_minutes ({e}), skipping constraint.")
+
         elif c_field == "gpu_discrete":
             disc_col = _find_column(filtered_df, ["gpu_discrete", "is_discrete_gpu"])
             gpu_name_col = _find_column(filtered_df, ["gpu_name", "gpu"])

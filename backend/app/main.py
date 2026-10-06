@@ -17,7 +17,7 @@ from app.api.routes import chat, constraints, tts, stt
 
 app = FastAPI(
     title="Laptop Recommendation Chatbot API",
-    description="Tư vấn laptop thông minh sử dụng NLP + LightGBM + Gurobi/PuLP + Gemini Search Grounding + Firestore + Google Cloud STT & TTS",
+    description="Tư vấn laptop thông minh sử dụng NLP + LightGBM + Google OR-Tools CP-SAT + Gemini Search Grounding + Firestore + Google Cloud STT & TTS",
     version="1.0.0",
 )
 

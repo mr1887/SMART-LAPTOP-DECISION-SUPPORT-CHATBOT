@@ -26,6 +26,7 @@ class ExperimentRecord:
     selected_product: Optional[Union[Dict[str, Any], str, int]] = None
     status: str = "UNKNOWN"  # e.g., "OPTIMAL", "FEASIBLE", "INFEASIBLE", "ERROR"
     hard_constraint_satisfied: bool = True
+    has_soft_violation: bool = False
     soft_violation_count: int = 0
     llm_calls: int = 0
     input_tokens: int = 0

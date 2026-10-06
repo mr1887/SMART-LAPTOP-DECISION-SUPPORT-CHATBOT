@@ -172,7 +172,7 @@ def solve(
                         model.Add(sum(price_vals[idx] * x[i] for idx, i in enumerate(indices)) == target_val)
                 else:
                     # Soft: Biến bù slack_p tính theo số đơn vị PRICE_VIOLATION_UNIT_VND
-                    slack_p = model.NewIntVar(0, 2000, f"slack_price_{c_idx}")
+                    slack_p = model.NewIntVar(0, 100_000, f"slack_price_{c_idx}")
                     if c_op == "<=":
                         model.Add(sum(price_vals[idx] * x[i] for idx, i in enumerate(indices)) <= target_val + PRICE_VIOLATION_UNIT_VND * slack_p)
                     elif c_op == ">=":
@@ -197,6 +197,10 @@ def solve(
                         model.Add(sum(ram_vals[idx] * x[i] for idx, i in enumerate(indices)) <= target_val)
                     elif c_op == "=":
                         model.Add(sum(ram_vals[idx] * x[i] for idx, i in enumerate(indices)) == target_val)
+                else:
+                    # Limitation: Soft constraint cho RAM hiện tại chưa hỗ trợ slack variable & penalty trong solver.
+                    # Bỏ qua an toàn để không crash và không tự động biến thành hard constraint.
+                    pass
 
         # 3. Storage constraint (mặc định hard)
         elif c_field == "storage_gb":
@@ -211,6 +215,10 @@ def solve(
                         model.Add(sum(storage_vals[idx] * x[i] for idx, i in enumerate(indices)) <= target_val)
                     elif c_op == "=":
                         model.Add(sum(storage_vals[idx] * x[i] for idx, i in enumerate(indices)) == target_val)
+                else:
+                    # Limitation: Soft constraint cho Storage hiện tại chưa hỗ trợ slack variable & penalty trong solver.
+                    # Bỏ qua an toàn để không crash và không tự động biến thành hard constraint.
+                    pass
 
         # 4. Weight constraint
         elif c_field == "weight_kg":
@@ -228,7 +236,7 @@ def solve(
                         model.Add(sum(weight_grams[idx] * x[i] for idx, i in enumerate(indices)) == target_grams)
                 else:
                     # Soft: Biến bù slack_w tính theo số đơn vị WEIGHT_VIOLATION_UNIT_GRAMS
-                    slack_w = model.NewIntVar(0, 100, f"slack_weight_{c_idx}")
+                    slack_w = model.NewIntVar(0, 10_000, f"slack_weight_{c_idx}")
                     if c_op == "<=":
                         model.Add(sum(weight_grams[idx] * x[i] for idx, i in enumerate(indices)) <= target_grams + WEIGHT_VIOLATION_UNIT_GRAMS * slack_w)
                     elif c_op == ">=":
@@ -253,7 +261,7 @@ def solve(
                         model.Add(sum(battery_vals[idx] * x[i] for idx, i in enumerate(indices)) == target_val)
                 else:
                     # Soft: Biến bù slack_b tính theo số đơn vị BATTERY_VIOLATION_UNIT_MINUTES
-                    slack_b = model.NewIntVar(0, 200, f"slack_battery_{c_idx}")
+                    slack_b = model.NewIntVar(0, 10_000, f"slack_battery_{c_idx}")
                     if c_op == ">=":
                         model.Add(sum(battery_vals[idx] * x[i] for idx, i in enumerate(indices)) + BATTERY_VIOLATION_UNIT_MINUTES * slack_b >= target_val)
                     elif c_op == "<=":
@@ -264,32 +272,42 @@ def solve(
 
         # 6. GPU discrete (mặc định hard)
         elif c_field == "gpu_discrete":
-            disc_col = _find_column(candidates, ["gpu_discrete", "is_discrete_gpu"])
-            gpu_name_col = _find_column(candidates, ["gpu_name", "gpu"])
-            req_disc = bool(c_val)
+            if is_hard:
+                disc_col = _find_column(candidates, ["gpu_discrete", "is_discrete_gpu"])
+                gpu_name_col = _find_column(candidates, ["gpu_name", "gpu"])
+                req_disc = bool(c_val)
 
-            disc_flags = []
-            for i in indices:
-                if disc_col and pd.notna(candidates.loc[i, disc_col]):
-                    is_d = bool(candidates.loc[i, disc_col])
-                elif gpu_name_col:
-                    is_d = _is_discrete_gpu(candidates.loc[i, gpu_name_col])
-                else:
-                    is_d = False
-                disc_flags.append(1 if (is_d == req_disc) else 0)
+                disc_flags = []
+                for i in indices:
+                    if disc_col and pd.notna(candidates.loc[i, disc_col]):
+                        is_d = bool(candidates.loc[i, disc_col])
+                    elif gpu_name_col:
+                        is_d = _is_discrete_gpu(candidates.loc[i, gpu_name_col])
+                    else:
+                        is_d = False
+                    disc_flags.append(1 if (is_d == req_disc) else 0)
 
-            model.Add(sum(disc_flags[idx] * x[i] for idx, i in enumerate(indices)) == 1)
+                model.Add(sum(disc_flags[idx] * x[i] for idx, i in enumerate(indices)) == 1)
+            else:
+                # Limitation: Soft constraint cho GPU Discrete hiện tại chưa hỗ trợ slack penalty.
+                # Bỏ qua an toàn để không crash và không tự động biến thành hard constraint.
+                pass
 
         # 7. GPU keyword (mặc định hard)
         elif c_field == "gpu_keyword":
-            gpu_name_col = _find_column(candidates, ["gpu_name", "gpu"])
-            kw = str(c_val).strip()
-            if gpu_name_col and kw:
-                kw_flags = [
-                    1 if _matches_gpu_keyword(candidates.loc[i, gpu_name_col], kw) else 0
-                    for i in indices
-                ]
-                model.Add(sum(kw_flags[idx] * x[i] for idx, i in enumerate(indices)) == 1)
+            if is_hard:
+                gpu_name_col = _find_column(candidates, ["gpu_name", "gpu"])
+                kw = str(c_val).strip()
+                if gpu_name_col and kw:
+                    kw_flags = [
+                        1 if _matches_gpu_keyword(candidates.loc[i, gpu_name_col], kw) else 0
+                        for i in indices
+                    ]
+                    model.Add(sum(kw_flags[idx] * x[i] for idx, i in enumerate(indices)) == 1)
+            else:
+                # Limitation: Soft constraint cho GPU Keyword hiện tại chưa hỗ trợ slack penalty.
+                # Bỏ qua an toàn để không crash và không tự động biến thành hard constraint.
+                pass
 
     # Xác định cột điểm relevance (ưu tiên final_relevance_score -> relevance_score -> AI_Score)
     score_col = _find_column(candidates, ["final_relevance_score", "relevance_score", "AI_Score"])

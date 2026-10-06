@@ -104,6 +104,7 @@ def run_benchmark(
                 "selected_product": product_name,
                 "status": "COMPLETED" if product_name else "FAILED",
                 "hard_constraint_satisfied": None,  # Cần đối chiếu validation độc lập
+                "has_soft_violation": False,
                 "soft_violation_count": 0,
                 "llm_calls": 1,
                 "input_tokens": None,   # Để null nếu API response không cung cấp token metadata
@@ -129,6 +130,7 @@ def run_benchmark(
                 "selected_product": None,
                 "status": "ERROR",
                 "hard_constraint_satisfied": False,
+                "has_soft_violation": False,
                 "soft_violation_count": 0,
                 "llm_calls": 1,
                 "input_tokens": None,
@@ -180,7 +182,8 @@ def run_benchmark(
                 "candidate_count": cand_count,
                 "selected_product": selected_prod_name,
                 "status": opt.get("status", "UNKNOWN"),
-                "hard_constraint_satisfied": is_feasible and not has_soft_v,
+                "hard_constraint_satisfied": is_feasible,
+                "has_soft_violation": has_soft_v,
                 "soft_violation_count": len(soft_violations),
                 "llm_calls": 1,  # 1 lượt trích xuất NLU bằng Gemini
                 "input_tokens": None,   # Để null nếu API response không cung cấp token metadata
@@ -206,6 +209,7 @@ def run_benchmark(
                 "selected_product": None,
                 "status": "ERROR",
                 "hard_constraint_satisfied": False,
+                "has_soft_violation": False,
                 "soft_violation_count": 0,
                 "llm_calls": 1,
                 "input_tokens": None,
