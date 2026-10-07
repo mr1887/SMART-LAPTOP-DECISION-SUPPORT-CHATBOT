@@ -26,6 +26,8 @@ try:
     from gurobipy import GRB
     GUROBI_AVAILABLE = True
 except ImportError:
+    gp = None  # type: ignore
+    GRB = None  # type: ignore
     GUROBI_AVAILABLE = False
 
 
@@ -33,9 +35,12 @@ except ImportError:
 _GUROBI_ENV = None
 
 
-def _create_gurobi_model(name: str) -> "gp.Model":
+def _create_gurobi_model(name: str) -> Any:
     """Tạo Gurobi Model - ưu tiên dò license tự động hoặc WLS params từ env."""
     global _GUROBI_ENV
+
+    if not GUROBI_AVAILABLE or gp is None:
+        raise RuntimeError("Gurobi is not installed or available.")
 
     if _GUROBI_ENV is not None:
         return gp.Model(name, env=_GUROBI_ENV)
@@ -158,10 +163,10 @@ def _solve_pulp(df: pd.DataFrame, constraints: dict) -> dict:
             kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
             prob += pulp.lpSum(kw_vals[i] * x[i] for i in indices) >= 1
 
-    prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     if pulp.LpStatus[prob.status] == "Optimal":
-        chosen_indices = [i for i in indices if x[i].value() and x[i].value() > 0.5]
+        chosen_indices = [i for i in indices if (x[i].value() or 0.0) > 0.5]
         if chosen_indices:
             chosen = chosen_indices[0]
             row = df.loc[chosen]
@@ -244,32 +249,40 @@ def _solve_pulp(df: pd.DataFrame, constraints: dict) -> dict:
             kw_vals = [1 if _matches_gpu_keyword(df.loc[i, "gpu_name"], kw) else 0 for i in indices]
             relax_prob += pulp.lpSum(kw_vals[i] * x[i] for i in indices) + slack_gpu_kw >= 1
 
-    relax_prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    relax_prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     if pulp.LpStatus[relax_prob.status] == "Optimal":
-        chosen_indices = [i for i in indices if x[i].value() and x[i].value() > 0.5]
+        chosen_indices = [i for i in indices if (x[i].value() or 0.0) > 0.5]
         if chosen_indices:
             chosen = chosen_indices[0]
             row = df.loc[chosen]
             score_val = float(row["AI_Score"])
 
             violations = []
-            if constraints.get("max_price") is not None and slack_price.value() and slack_price.value() > 100:
-                violations.append(f"vượt ngân sách tối đa {slack_price.value():,.0f}đ")
-            if constraints.get("min_price") is not None and slack_min_price.value() and slack_min_price.value() > 100:
-                violations.append(f"thấp hơn ngân sách tối thiểu {slack_min_price.value():,.0f}đ")
-            if constraints.get("max_weight") is not None and slack_weight.value() and slack_weight.value() > 0.05:
-                violations.append(f"nặng hơn {slack_weight.value():.2f}kg so với yêu cầu")
-            if constraints.get("min_battery") is not None and slack_battery.value() and slack_battery.value() > 5:
-                violations.append(f"thiếu {slack_battery.value():.0f} phút pin so với yêu cầu")
-            if constraints.get("require_discrete_gpu") is True and slack_gpu_disc.value() and slack_gpu_disc.value() > 0.5:
+            sp_val = slack_price.value() or 0.0
+            smp_val = slack_min_price.value() or 0.0
+            sw_val = slack_weight.value() or 0.0
+            sb_val = slack_battery.value() or 0.0
+            sgd_val = slack_gpu_disc.value() or 0.0
+            sgk_val = slack_gpu_kw.value() or 0.0
+
+            if constraints.get("max_price") is not None and sp_val > 100:
+                violations.append(f"vượt ngân sách tối đa {sp_val:,.0f}đ")
+            if constraints.get("min_price") is not None and smp_val > 100:
+                violations.append(f"thấp hơn ngân sách tối thiểu {smp_val:,.0f}đ")
+            if constraints.get("max_weight") is not None and sw_val > 0.05:
+                violations.append(f"nặng hơn {sw_val:.2f}kg so với yêu cầu")
+            if constraints.get("min_battery") is not None and sb_val > 5:
+                violations.append(f"thiếu {sb_val:.0f} phút pin so với yêu cầu")
+            if constraints.get("require_discrete_gpu") is True and sgd_val > 0.5:
                 violations.append("chưa trang bị card đồ họa rời (dùng card tích hợp)")
-            elif constraints.get("require_discrete_gpu") is False and slack_gpu_disc.value() and slack_gpu_disc.value() > 0.5:
+            elif constraints.get("require_discrete_gpu") is False and sgd_val > 0.5:
                 violations.append("trang bị card đồ họa rời thay vì card tích hợp")
-            if constraints.get("gpu_keyword") and slack_gpu_kw.value() and slack_gpu_kw.value() > 0.5:
+            if constraints.get("gpu_keyword") and sgk_val > 0.5:
                 violations.append(f"không trang bị đúng dòng GPU '{constraints['gpu_keyword']}'")
             for tag, s_var in slack_tags.items():
-                if s_var.value() and s_var.value() > 0.5:
+                st_val = s_var.value() or 0.0
+                if st_val > 0.5:
                     tag_name_vi = {
                         "is_gaming_friendly": "Gaming",
                         "is_office_friendly": "Văn phòng",
@@ -312,6 +325,8 @@ def _solve_gurobi(df: pd.DataFrame, constraints: dict) -> dict:
     - Vòng 1: Strict BIP.
     - Vòng 2: Soft BIP Relaxation (Nghiệm gần tối ưu).
     """
+    if not GUROBI_AVAILABLE or gp is None or GRB is None:
+        return _solve_pulp(df, constraints)
     battery_col = "office_battery_minutes_final" if "office_battery_minutes_final" in df.columns else "office_battery_result_minutes"
     indices = list(df.index)
 
