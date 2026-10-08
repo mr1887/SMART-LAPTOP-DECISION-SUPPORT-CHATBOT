@@ -330,24 +330,41 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function handleBackendResponse(data) {
     const replyText = data.reply || "Đã nhận kết quả.";
-    const laptopDetails = data.laptop_details;
-    const recommendedLaptops = data.recommended_laptops;
-    const recommendations = data.recommendations;
+    const recommendations = Array.isArray(data.recommendations) ? data.recommendations : [];
+    const recommendedLaptops = Array.isArray(data.recommended_laptops) ? data.recommended_laptops : [];
+    const laptopDetails = data.laptop_details || null;
     const constraints = data.constraints || {};
     const result = data.result || {};
 
-    const isNearestFallback = (
-      result.is_feasible === false ||
+    // Console debug tạm thời để dễ dàng kiểm tra Top-3 recommendation
+    console.log(
+      `[Top-3 Debug] recommendations count: ${recommendations.length}, recommended_laptops count: ${recommendedLaptops.length}`
+    );
+
+    // Ưu tiên recommended_laptops. Nếu rỗng fallback về laptop_details
+    let laptopsToRender = [];
+    if (recommendedLaptops.length > 0) {
+      laptopsToRender = recommendedLaptops;
+    } else if (laptopDetails) {
+      laptopsToRender = [laptopDetails];
+    }
+
+    // Cảnh báo phương án gần nhất chỉ khi:
+    // - result.status == "RELAXED"
+    // hoặc
+    // - recommendation.type == "nearest_alternative"
+    // KHÔNG hiển thị cảnh báo này nếu chỉ có soft violation
+    const isNearestFallback = Boolean(
       result.status === "RELAXED" ||
-      (recommendations && recommendations.some((r) => r.type === "nearest_alternative")) ||
-      (recommendedLaptops && recommendedLaptops.some((l) => l.type === "nearest_alternative"))
+      recommendations.some((r) => r && r.type === "nearest_alternative") ||
+      (recommendedLaptops && recommendedLaptops.some((l) => l && l.type === "nearest_alternative"))
     );
 
     const msgElement = appendMessage(
       "assistant",
       replyText,
-      laptopDetails,
-      recommendedLaptops,
+      null,
+      laptopsToRender,
       recommendations,
       isNearestFallback
     );
@@ -355,14 +372,14 @@ document.addEventListener("DOMContentLoaded", () => {
     // Update active constraints badges
     renderConstraintsBadges(constraints);
 
-    // Audio TTS handling using Google Cloud TTS (/api/tts) - ONLY if enabled
+    // Audio TTS handling using Google Cloud TTS (/api/tts) - CHỈ gọi khi bật toggle
     if (toggleVoiceAutoplay && toggleVoiceAutoplay.checked && replyText) {
       fetchTTSAudio(replyText, msgElement, true);
     }
   }
 
   function formatPrice(val) {
-    if (!val || isNaN(val)) return "";
+    if (val === undefined || val === null || val === "" || isNaN(val)) return "";
     const num = Number(val);
     if (num >= 1000000) {
       const tr = num / 1000000;
@@ -371,193 +388,348 @@ document.addEventListener("DOMContentLoaded", () => {
     return num.toLocaleString("vi-VN") + " VNĐ";
   }
 
+  function getRecommendationMeta(laptop, recommendations, idx) {
+    if (!recommendations || !Array.isArray(recommendations) || recommendations.length === 0) {
+      return {};
+    }
+
+    // Ưu tiên match bằng: recommendation.laptop_id == laptop.laptop_model_id hoặc laptop.laptop_id
+    if (laptop) {
+      const laptopId =
+        laptop.laptop_model_id !== undefined && laptop.laptop_model_id !== null
+          ? laptop.laptop_model_id
+          : laptop.laptop_id !== undefined && laptop.laptop_id !== null
+          ? laptop.laptop_id
+          : laptop.id;
+
+      if (laptopId !== undefined && laptopId !== null) {
+        const matched = recommendations.find((r) => {
+          if (!r) return false;
+          const rId =
+            r.laptop_id !== undefined && r.laptop_id !== null
+              ? r.laptop_id
+              : r.laptop_model_id;
+          return rId !== undefined && rId !== null && String(rId) === String(laptopId);
+        });
+        if (matched) return matched;
+      }
+    }
+
+    // Chỉ fallback về index nếu không match được id
+    if (idx !== undefined && idx !== null && idx >= 0 && idx < recommendations.length && recommendations[idx]) {
+      return recommendations[idx];
+    }
+    return {};
+  }
+
+  function getRecommendationLabel(type, rank) {
+    let label = "Gợi ý";
+    let badgeClass = "badge-best-match";
+    let cardClass = "best-match";
+
+    switch (type) {
+      case "best_match":
+        label = "Phù hợp nhất";
+        badgeClass = "badge-best-match";
+        cardClass = "best-match";
+        break;
+      case "budget_alternative":
+        label = "Tiết kiệm hơn";
+        badgeClass = "badge-budget";
+        cardClass = "budget-alt";
+        break;
+      case "performance_alternative":
+        label = "Hiệu năng tốt";
+        badgeClass = "badge-perf";
+        cardClass = "perf-alt";
+        break;
+      case "nearest_alternative":
+        label = "Phương án gần nhất";
+        badgeClass = "badge-nearest";
+        cardClass = "nearest-alt";
+        break;
+      default:
+        if (rank === 1) {
+          label = "Phù hợp nhất";
+          badgeClass = "badge-best-match";
+          cardClass = "best-match";
+        } else if (rank === 2) {
+          label = "Tiết kiệm hơn";
+          badgeClass = "badge-budget";
+          cardClass = "budget-alt";
+        } else if (rank === 3) {
+          label = "Hiệu năng tốt";
+          badgeClass = "badge-perf";
+          cardClass = "perf-alt";
+        }
+        break;
+    }
+
+    return { label, badgeClass, cardClass };
+  }
+
   function createSpecItem(label, val) {
+    if (val === undefined || val === null || val === "") return null;
     const item = document.createElement("div");
     item.className = "card-spec-item";
+
     const l = document.createElement("span");
     l.className = "card-spec-label";
     l.textContent = label + ":";
+
     const v = document.createElement("span");
     v.className = "card-spec-val";
-    v.textContent = val;
+    v.textContent = String(val);
+
     item.appendChild(l);
     item.appendChild(v);
     return item;
   }
 
-  function renderTop3Cards(recommendedLaptops, recommendations, isNearestFallback = false) {
-    if (!recommendedLaptops || recommendedLaptops.length === 0) return null;
+  function buildLaptopCard(laptop, recMeta = {}, rank = 1, idx = 0) {
+    const resolvedRank = laptop.rank || recMeta.rank || rank || (idx + 1);
+    const resolvedType =
+      laptop.type ||
+      recMeta.type ||
+      (resolvedRank === 1
+        ? "best_match"
+        : resolvedRank === 2
+        ? "budget_alternative"
+        : resolvedRank === 3
+        ? "performance_alternative"
+        : "best_match");
 
-    const wrapper = document.createElement("div");
-    wrapper.className = "top3-wrapper";
+    const { label, badgeClass, cardClass } = getRecommendationLabel(resolvedType, resolvedRank);
 
-    // Cảnh báo nếu là phương án gần nhất (nearest_alternative fallback)
-    const hasNearest = isNearestFallback || recommendedLaptops.some((l, idx) => {
-      const recMeta = (recommendations && recommendations[idx]) ? recommendations[idx] : {};
-      return (l.type === "nearest_alternative" || recMeta.type === "nearest_alternative");
-    });
+    const card = document.createElement("div");
+    card.className = `recommendation-card ${cardClass}`;
 
-    if (hasNearest) {
-      const warningEl = document.createElement("div");
-      warningEl.className = "nearest-alt-warning";
-      warningEl.innerHTML = '<span class="warning-icon">⚠️</span><span>Không có laptop thỏa hoàn toàn các yêu cầu bắt buộc. Đây là phương án gần nhất.</span>';
-      wrapper.appendChild(warningEl);
+    // Header của card: Hiển thị Rank (#1, #2, #3) + Label loại gợi ý
+    const badgeHeader = document.createElement("div");
+    badgeHeader.className = "card-badge-header";
+
+    const badgeLeft = document.createElement("div");
+    badgeLeft.className = "card-badge-left";
+
+    const rankBadge = document.createElement("span");
+    rankBadge.className = "card-rank-badge";
+    rankBadge.textContent = `#${resolvedRank}`;
+    badgeLeft.appendChild(rankBadge);
+
+    const typeBadge = document.createElement("span");
+    typeBadge.className = `card-type-badge ${badgeClass}`;
+    typeBadge.textContent = label;
+    badgeLeft.appendChild(typeBadge);
+
+    badgeHeader.appendChild(badgeLeft);
+
+    // Điểm Utility / Performance Scores
+    const scoreContainer = document.createElement("div");
+    scoreContainer.className = "card-scores-wrapper";
+
+    // 1. Utility Score (dạng: Utility: xx%)
+    const uScoreRaw =
+      laptop.utility_score !== undefined && laptop.utility_score !== null
+        ? laptop.utility_score
+        : recMeta.utility_score !== undefined && recMeta.utility_score !== null
+        ? recMeta.utility_score
+        : null;
+
+    if (uScoreRaw !== null && uScoreRaw !== "" && !isNaN(uScoreRaw)) {
+      const uNum = Number(uScoreRaw);
+      if (!isNaN(uNum)) {
+        const uPercent = uNum <= 1.0 ? Math.round(uNum * 100) : Math.round(uNum);
+        if (!isNaN(uPercent)) {
+          const uSpan = document.createElement("span");
+          uSpan.className = "card-score utility-score";
+          uSpan.textContent = `Utility: ${uPercent}%`;
+          scoreContainer.appendChild(uSpan);
+        }
+      }
     }
 
-    const container = document.createElement("div");
-    container.className = "top3-container";
+    // 2. Performance Score (dạng: Performance: xx%)
+    const pScoreRaw =
+      laptop.performance_score !== undefined && laptop.performance_score !== null
+        ? laptop.performance_score
+        : recMeta.performance_score !== undefined && recMeta.performance_score !== null
+        ? recMeta.performance_score
+        : null;
 
-    recommendedLaptops.forEach((laptop, idx) => {
-      if (!laptop) return;
-      const recMeta = (recommendations && recommendations[idx]) ? recommendations[idx] : {};
-      const rank = laptop.rank || recMeta.rank || (idx + 1);
-      const type = laptop.type || recMeta.type || (idx === 0 ? "best_match" : (idx === 1 ? "budget_alternative" : "performance_alternative"));
-
-      let badgeLabel = "Gợi ý";
-      let badgeClass = "badge-best-match";
-      let cardClass = "best-match";
-
-      if (type === "best_match") {
-        badgeLabel = "Phù hợp nhất";
-        badgeClass = "badge-best-match";
-        cardClass = "best-match";
-      } else if (type === "budget_alternative") {
-        badgeLabel = "Tiết kiệm hơn";
-        badgeClass = "badge-budget";
-        cardClass = "budget-alt";
-      } else if (type === "performance_alternative") {
-        badgeLabel = "Hiệu năng tốt";
-        badgeClass = "badge-perf";
-        cardClass = "perf-alt";
-      } else if (type === "nearest_alternative") {
-        badgeLabel = "Phương án gần nhất";
-        badgeClass = "badge-nearest";
-        cardClass = "nearest-alt";
+    if (pScoreRaw !== null && pScoreRaw !== "" && !isNaN(pScoreRaw)) {
+      const pNum = Number(pScoreRaw);
+      if (!isNaN(pNum)) {
+        const pPercent = pNum <= 1.0 ? Math.round(pNum * 100) : Math.round(pNum);
+        if (!isNaN(pPercent)) {
+          const pSpan = document.createElement("span");
+          pSpan.className = "card-score perf-score";
+          pSpan.textContent = `Performance: ${pPercent}%`;
+          scoreContainer.appendChild(pSpan);
+        }
       }
+    }
 
-      const card = document.createElement("div");
-      card.className = `recommendation-card ${cardClass}`;
-
-      // Badge header
-      const badgeHeader = document.createElement("div");
-      badgeHeader.className = "card-badge-header";
-
-      const badge = document.createElement("span");
-      badge.className = `card-type-badge ${badgeClass}`;
-      badge.textContent = badgeLabel;
-      badgeHeader.appendChild(badge);
-
-      // Điểm Utility / Score
-      const uScore = laptop.utility_score !== undefined ? laptop.utility_score : recMeta.utility_score;
-      const pScore = laptop.performance_score !== undefined ? laptop.performance_score : recMeta.performance_score;
-      const aiScore = laptop.ai_score || laptop.relevance_score;
-
-      const scoreContainer = document.createElement("div");
-      scoreContainer.className = "card-scores-wrapper";
-
-      if (uScore !== undefined && uScore !== null && !isNaN(uScore)) {
-        const uSpan = document.createElement("span");
-        uSpan.className = "card-score utility-score";
-        uSpan.textContent = `Utility: ${(Number(uScore) * 100).toFixed(0)}%`;
-        scoreContainer.appendChild(uSpan);
-      } else if (aiScore) {
+    // Fallback hiển thị AI Score cũ nếu chưa có cả 2 điểm trên
+    if (scoreContainer.children.length === 0) {
+      const aiScore = laptop.ai_score || laptop.relevance_score || recMeta.relevance_score;
+      if (aiScore !== undefined && aiScore !== null && !isNaN(aiScore)) {
         const aiSpan = document.createElement("span");
         aiSpan.className = "card-score ai-score";
         aiSpan.textContent = `Score: ${(Number(aiScore) * 10).toFixed(1)}/10`;
         scoreContainer.appendChild(aiSpan);
       }
+    }
 
-      if (scoreContainer.children.length > 0) {
-        badgeHeader.appendChild(scoreContainer);
-      }
+    if (scoreContainer.children.length > 0) {
+      badgeHeader.appendChild(scoreContainer);
+    }
 
-      card.appendChild(badgeHeader);
+    card.appendChild(badgeHeader);
 
-      // Laptop Name & Brand
-      const brand = laptop.brand_name || laptop.brand || "";
-      const nameEl = document.createElement("div");
-      nameEl.className = "card-laptop-name";
-      nameEl.textContent = laptop.laptop_name || (brand ? `${brand} Laptop` : `Laptop #${laptop.laptop_model_id || rank}`);
-      card.appendChild(nameEl);
+    // Laptop Name & Brand
+    const brand = laptop.brand_name || laptop.brand || "";
+    const nameEl = document.createElement("div");
+    nameEl.className = "card-laptop-name";
+    nameEl.textContent =
+      laptop.laptop_name || (brand ? `${brand} Laptop` : `Laptop #${laptop.laptop_model_id || resolvedRank}`);
+    card.appendChild(nameEl);
 
-      // Price
-      const rawPrice = laptop.price_vnd || laptop.price;
-      if (rawPrice) {
-        const priceEl = document.createElement("div");
-        priceEl.className = "card-price";
-        priceEl.textContent = formatPrice(rawPrice);
-        card.appendChild(priceEl);
-      }
+    // Price
+    const rawPrice = laptop.price_vnd ?? laptop.price ?? recMeta.price;
+    if (rawPrice !== undefined && rawPrice !== null && !isNaN(rawPrice) && Number(rawPrice) > 0) {
+      const priceEl = document.createElement("div");
+      priceEl.className = "card-price";
+      priceEl.textContent = formatPrice(rawPrice);
+      card.appendChild(priceEl);
+    }
 
-      // Specs list
-      const specsList = document.createElement("div");
-      specsList.className = "card-specs-list";
+    // Specs list
+    const specsList = document.createElement("div");
+    specsList.className = "card-specs-list";
 
-      if (brand && (!laptop.laptop_name || !laptop.laptop_name.toLowerCase().includes(brand.toLowerCase()))) {
-        specsList.appendChild(createSpecItem("Hãng", brand));
-      }
+    if (brand && (!laptop.laptop_name || !laptop.laptop_name.toLowerCase().includes(brand.toLowerCase()))) {
+      const bItem = createSpecItem("Hãng", brand);
+      if (bItem) specsList.appendChild(bItem);
+    }
 
-      const cpu = laptop.cpu || laptop.cpu_name;
-      if (cpu) {
-        specsList.appendChild(createSpecItem("CPU", cpu));
-      }
+    const cpu = laptop.cpu || laptop.cpu_name;
+    if (cpu) {
+      const cItem = createSpecItem("CPU", cpu);
+      if (cItem) specsList.appendChild(cItem);
+    }
 
-      const gpu = laptop.gpu || laptop.gpu_name;
-      if (gpu) {
-        specsList.appendChild(createSpecItem("GPU", gpu));
-      }
+    const gpu = laptop.gpu || laptop.gpu_name;
+    if (gpu) {
+      const gItem = createSpecItem("GPU", gpu);
+      if (gItem) specsList.appendChild(gItem);
+    }
 
-      const screen = laptop.screen || (laptop.screen_size ? `${laptop.screen_size} inch` : null);
-      if (screen) {
-        specsList.appendChild(createSpecItem("Màn", screen));
-      }
+    const screen = laptop.screen || (laptop.screen_size ? `${laptop.screen_size} inch` : null);
+    if (screen) {
+      const sItem = createSpecItem("Màn hình", screen);
+      if (sItem) specsList.appendChild(sItem);
+    }
 
-      const weight = laptop.laptop_weight ? `${laptop.laptop_weight} kg` : (laptop.weight ? `${laptop.weight}` : null);
-      if (weight) {
-        specsList.appendChild(createSpecItem("Nặng", weight));
-      }
+    let weightStr = null;
+    if (laptop.laptop_weight !== undefined && laptop.laptop_weight !== null) {
+      weightStr = `${laptop.laptop_weight} kg`;
+    } else if (laptop.weight !== undefined && laptop.weight !== null) {
+      weightStr = typeof laptop.weight === "number" ? `${laptop.weight} kg` : (laptop.weight.toString().includes("kg") ? laptop.weight : `${laptop.weight} kg`);
+    }
+    if (weightStr) {
+      const wItem = createSpecItem("Trọng lượng", weightStr);
+      if (wItem) specsList.appendChild(wItem);
+    }
 
-      const battery = laptop.battery_minutes ? `${Math.round(laptop.battery_minutes / 60)}h pin` : (laptop.office_battery_minutes_final ? `${Math.round(laptop.office_battery_minutes_final / 60)}h pin` : null);
-      if (battery) {
-        specsList.appendChild(createSpecItem("Pin", battery));
-      }
+    const batteryMins = laptop.battery_minutes ?? laptop.office_battery_minutes_final;
+    if (batteryMins !== undefined && batteryMins !== null && !isNaN(batteryMins) && Number(batteryMins) > 0) {
+      const hours = Math.round(Number(batteryMins) / 60);
+      const batItem = createSpecItem("Pin", `${hours}h (${batteryMins} phút)`);
+      if (batItem) specsList.appendChild(batItem);
+    }
 
-      if (pScore !== undefined && pScore !== null && !isNaN(pScore) && Number(pScore) > 0) {
-        specsList.appendChild(createSpecItem("Hiệu năng", `${(Number(pScore) * 100).toFixed(0)}% GB6`));
-      }
+    const roles = Array.isArray(laptop.suitable_roles)
+      ? laptop.suitable_roles.join(", ")
+      : laptop.suitable_roles;
+    if (roles) {
+      const rItem = createSpecItem("Phù hợp", roles);
+      if (rItem) specsList.appendChild(rItem);
+    }
 
-      const roles = Array.isArray(laptop.suitable_roles) ? laptop.suitable_roles.join(", ") : laptop.suitable_roles;
-      if (roles) {
-        specsList.appendChild(createSpecItem("Hợp", roles));
-      }
+    card.appendChild(specsList);
 
-      card.appendChild(specsList);
+    // Media Actions (Review video & Search Image)
+    const name = laptop.laptop_name || "";
+    const ytUrl =
+      laptop.review_video_url ||
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(
+        "Đánh giá " + (brand ? brand + " " : "") + name
+      )}`;
+    const imgUrl =
+      laptop.image_search_url ||
+      `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(
+        (brand ? brand + " " : "") + name + " laptop"
+      )}`;
 
-      // Media actions
-      const name = laptop.laptop_name || "";
-      const ytUrl = laptop.review_video_url || `https://www.youtube.com/results?search_query=${encodeURIComponent("Đánh giá " + (brand ? brand + " " : "") + name)}`;
-      const imgUrl = laptop.image_search_url || `https://www.google.com/search?tbm=isch&q=${encodeURIComponent((brand ? brand + " " : "") + name + " laptop")}`;
+    const actionsDiv = document.createElement("div");
+    actionsDiv.className = "card-actions";
 
-      const actionsDiv = document.createElement("div");
-      actionsDiv.className = "card-actions";
+    const ytLink = document.createElement("a");
+    ytLink.className = "card-btn-link";
+    ytLink.href = ytUrl;
+    ytLink.target = "_blank";
+    ytLink.rel = "noopener noreferrer";
+    ytLink.textContent = "Review YouTube";
+    actionsDiv.appendChild(ytLink);
 
-      const ytLink = document.createElement("a");
-      ytLink.className = "card-btn-link";
-      ytLink.href = ytUrl;
-      ytLink.target = "_blank";
-      ytLink.rel = "noopener noreferrer";
-      ytLink.textContent = "Review YouTube";
-      actionsDiv.appendChild(ytLink);
+    const imgLink = document.createElement("a");
+    imgLink.className = "card-btn-link";
+    imgLink.href = imgUrl;
+    imgLink.target = "_blank";
+    imgLink.rel = "noopener noreferrer";
+    imgLink.textContent = "Xem Ảnh";
+    actionsDiv.appendChild(imgLink);
 
-      const imgLink = document.createElement("a");
-      imgLink.className = "card-btn-link";
-      imgLink.href = imgUrl;
-      imgLink.target = "_blank";
-      imgLink.rel = "noopener noreferrer";
-      imgLink.textContent = "Xem Ảnh";
-      actionsDiv.appendChild(imgLink);
+    card.appendChild(actionsDiv);
 
-      card.appendChild(actionsDiv);
+    return card;
+  }
+
+  function renderRecommendationCards(recommendedLaptops, recommendations = [], isNearestFallback = false) {
+    if (!recommendedLaptops || !Array.isArray(recommendedLaptops) || recommendedLaptops.length === 0) {
+      return null;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "top3-wrapper";
+
+    // Cảnh báo nearest_alternative chỉ khi:
+    // - isNearestFallback === true (result.status === "RELAXED" hoặc nearest_alternative)
+    // - Hoặc có laptop/recommendation là "nearest_alternative"
+    // KHÔNG cảnh báo nếu chỉ có soft violation
+    const hasNearest = Boolean(
+      isNearestFallback ||
+      (recommendations && recommendations.some((r) => r && r.type === "nearest_alternative")) ||
+      (recommendedLaptops && recommendedLaptops.some((l) => l && l.type === "nearest_alternative"))
+    );
+
+    if (hasNearest) {
+      const warningEl = document.createElement("div");
+      warningEl.className = "nearest-alt-warning";
+      warningEl.innerHTML =
+        '<span class="warning-icon">⚠️</span><span>Không có laptop thỏa hoàn toàn các yêu cầu bắt buộc. Đây là phương án gần nhất.</span>';
+      wrapper.appendChild(warningEl);
+    }
+
+    const container = document.createElement("div");
+    container.className = "top3-container";
+    container.setAttribute("data-cards-count", String(Math.min(recommendedLaptops.length, 3)));
+
+    recommendedLaptops.forEach((laptop, idx) => {
+      if (!laptop) return;
+      const recMeta = getRecommendationMeta(laptop, recommendations, idx);
+      const rank = recMeta.rank || laptop.rank || (idx + 1);
+      const card = buildLaptopCard(laptop, recMeta, rank, idx);
       container.appendChild(card);
     });
 
@@ -565,7 +737,14 @@ document.addEventListener("DOMContentLoaded", () => {
     return wrapper;
   }
 
-  function appendMessage(role, text, laptopDetails = null, recommendedLaptops = null, recommendations = null, isNearestFallback = false) {
+  function appendMessage(
+    role,
+    text,
+    laptopDetails = null,
+    recommendedLaptops = null,
+    recommendations = null,
+    isNearestFallback = false
+  ) {
     const msgWrapper = document.createElement("div");
     msgWrapper.className = `message-wrapper ${role}`;
 
@@ -576,20 +755,26 @@ document.addEventListener("DOMContentLoaded", () => {
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
     try {
-      bubble.innerHTML = (typeof marked !== "undefined" && marked.parse) ? marked.parse(text) : text;
+      bubble.innerHTML = typeof marked !== "undefined" && marked.parse ? marked.parse(text) : text;
     } catch (e) {
       bubble.textContent = text;
     }
 
-    // Render Top-3 cards nếu có recommendedLaptops, hoặc fallback laptopDetails
-    const laptopsToRender = (recommendedLaptops && recommendedLaptops.length > 0)
-      ? recommendedLaptops
-      : (laptopDetails ? [laptopDetails] : []);
+    // Ưu tiên render recommendedLaptops; fallback về laptopDetails nếu có
+    const laptopsToRender =
+      recommendedLaptops && recommendedLaptops.length > 0
+        ? recommendedLaptops
+        : laptopDetails
+        ? [laptopDetails]
+        : [];
 
     if (laptopsToRender.length > 0) {
-      const cardsEl = renderTop3Cards(laptopsToRender, recommendations, isNearestFallback);
+      const cardsEl = renderRecommendationCards(laptopsToRender, recommendations, isNearestFallback);
       if (cardsEl) {
         bubble.appendChild(cardsEl);
+        if (laptopsToRender.length >= 2) {
+          msgWrapper.classList.add("has-top3");
+        }
       }
     }
 
