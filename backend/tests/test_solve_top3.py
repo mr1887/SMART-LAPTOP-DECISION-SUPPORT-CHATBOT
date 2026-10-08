@@ -240,6 +240,53 @@ class TestSolveTop3(unittest.TestCase):
         self.assertIn("laptop_id", res)
         self.assertEqual(res["laptop_id"], 2)
 
+    def test_08_soft_gte_satisfied_no_violation(self):
+        """soft >= satisfied -> không violation (không tạo violation âm)."""
+        req = RequirementSet(
+            constraints=[
+                Constraint(field="battery_minutes", operator=">=", value=300, type="soft")
+            ]
+        )
+        res = solve_top3(self.df, req)
+        self.assertTrue(res["is_feasible"])
+        top1 = res["recommendations"][0]
+        # Laptop 1 có pin 480 phút >= 300 phút -> thỏa mãn, không có violation
+        self.assertFalse(top1["has_soft_violation"])
+        self.assertEqual(top1["soft_violations"], [])
+
+    def test_09_soft_lte_satisfied_no_violation(self):
+        """soft <= satisfied -> không violation (không tạo violation âm)."""
+        req = RequirementSet(
+            constraints=[
+                Constraint(field="weight_kg", operator="<=", value=1.5, type="soft")
+            ]
+        )
+        res = solve_top3(self.df, req)
+        self.assertTrue(res["is_feasible"])
+        top1 = res["recommendations"][0]
+        # Laptop 1 nặng 1.3kg <= 1.5kg -> thỏa mãn, không có violation
+        self.assertFalse(top1["has_soft_violation"])
+        self.assertEqual(top1["soft_violations"], [])
+
+    def test_10_nearest_alternative_only_evaluates_hard_constraints(self):
+        """nearest alternative chỉ tính hard constraints, bỏ qua soft constraints."""
+        from app.optimizer.ortools_solver import solve_nearest_alternative
+        req = RequirementSet(
+            constraints=[
+                Constraint(field="price", operator="<=", value=8000000, type="hard"),
+                Constraint(field="weight_kg", operator="<=", value=1.0, type="soft"),
+            ]
+        )
+        res = solve_nearest_alternative(self.df, req)
+        self.assertEqual(res["status"], "RELAXED")
+        self.assertFalse(res["is_feasible"])
+        self.assertFalse(res["has_soft_violation"])
+        self.assertEqual(res["soft_violations"], [])
+        # Toàn bộ violation ghi nhận chỉ xuất phát từ hard constraint (price)
+        violated_fields = [v["field"] for v in res["violations"]]
+        self.assertIn("price", violated_fields)
+        self.assertNotIn("weight_kg", violated_fields)
+
 
 class TestPipelineTop3Integration(unittest.TestCase):
     """

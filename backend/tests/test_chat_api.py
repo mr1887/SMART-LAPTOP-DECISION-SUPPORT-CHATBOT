@@ -59,8 +59,7 @@ class TestChatApiTop3(unittest.TestCase):
             )
 
     def test_02_soft_violation_keeps_is_feasible_true(self):
-        """2. Soft violation KHÔNG được làm is_feasible=False (is_feasible=True, is_relaxed=True)."""
-        # Query có thể gây soft violation (ví dụ pin trâu hoặc giá thấp)
+        """2. Soft violation KHÔNG được làm is_feasible=False và KHÔNG bị gán is_relaxed=True nếu feasible."""
         res = self.client.post(
             "/api/chat",
             json={"message": "Tìm laptop gaming dưới 15 triệu"},
@@ -69,13 +68,24 @@ class TestChatApiTop3(unittest.TestCase):
         data = res.json()
         result = data.get("result")
 
-        if result and result.get("is_relaxed"):
-            # Khi có soft violation (relaxed), is_feasible VẪN PHẢI LÀ True
-            self.assertTrue(
-                result.get("is_feasible"),
-                "Khi có soft violation, is_feasible vẫn phải là True vì thỏa mãn 100% hard constraints."
-            )
-            self.assertTrue(result.get("is_relaxed"))
+        if result and result.get("is_feasible"):
+            # Nếu feasible, is_relaxed PHẢI LÀ False (chỉ RELAXED khi fallback nearest alternative)
+            self.assertFalse(result.get("is_relaxed"), "Feasible recommendation không được coi là is_relaxed=True")
+            self.assertTrue(result.get("is_feasible"))
+
+    def test_04_feasible_with_soft_violation_not_called_relaxed(self):
+        """4. Feasible + soft violation không bị gọi là RELAXED."""
+        res = self.client.post(
+            "/api/chat",
+            json={"message": "laptop dell mỏng nhẹ pin trâu giá 20 triệu"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        result = data.get("result")
+        if result and result.get("is_feasible"):
+            self.assertEqual(result.get("status"), "OPTIMAL" if result.get("status") == "OPTIMAL" else "FEASIBLE")
+            self.assertFalse(result.get("is_relaxed"))
+            self.assertIn("has_soft_violation", result)
 
     def test_03_chat_reset_session(self):
         """3. Reset session hoạt động đúng."""

@@ -223,7 +223,7 @@ class TestOrToolsTop1Verification(unittest.TestCase):
         self.assertEqual(opt["laptop_id"], 2)  # Laptop 2 có RTX 4060, gần nhất với yêu cầu
         self.assertIsInstance(opt["hard_violations"], list)
         self.assertGreater(len(opt["hard_violations"]), 0)
-        self.assertTrue(opt["has_soft_violation"])
+        self.assertFalse(opt["has_soft_violation"])
 
         self.assertEqual(len(rec_res["recommendations"]), 1)
         self.assertEqual(rec_res["recommendations"][0]["type"], "nearest_alternative")

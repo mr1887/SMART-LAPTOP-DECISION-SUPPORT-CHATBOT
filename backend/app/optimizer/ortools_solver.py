@@ -351,68 +351,8 @@ def solve(
             relevance_val = float(chosen_row[score_col]) if (score_col and pd.notna(chosen_row[score_col])) else None
 
             # Phân tích các vi phạm ràng buộc mềm (nếu có)
-            soft_violations = []
-            for tracker in soft_trackers:
-                field_type = tracker["type"]
-                target: float = float(tracker["target"])
-                col = tracker["col"]
-                op = tracker["op"]
-                actual_raw = chosen_row.get(col)
+            soft_violations = _extract_soft_violations(chosen_row, soft_trackers)
 
-                if field_type == "price":
-                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
-                    if op == "<=" and actual > target:
-                        diff: float = actual - target
-                        soft_violations.append({
-                            "field": "price",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Vượt ngân sách {diff:,.0f}đ",
-                        })
-                    elif op == ">=":
-                        diff: float = target - actual
-                        soft_violations.append({
-                            "field": "price",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Thấp hơn ngân sách tối thiểu {diff:,.0f}đ",
-                        })
-                elif field_type == "weight_kg":
-                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
-                    if op == "<=" and actual > target:
-                        diff: float = actual - target
-                        soft_violations.append({
-                            "field": "weight_kg",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Nặng hơn yêu cầu {diff:.2f}kg",
-                        })
-                    elif op == ">=":
-                        diff: float = target - actual
-                        soft_violations.append({
-                            "field": "weight_kg",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Nhẹ hơn yêu cầu {diff:.2f}kg",
-                        })
-                elif field_type == "battery_minutes":
-                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
-                    if op == ">=":
-                        diff: float = target - actual
-                        soft_violations.append({
-                            "field": "battery_minutes",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Thời lượng pin thấp hơn yêu cầu {diff:.0f} phút",
-                        })
-                    elif op == "<=":
-                        diff: float = actual - target
-                        soft_violations.append({
-                            "field": "battery_minutes",
-                            "target": target,
-                            "actual": actual,
-                            "violation": f"Thời lượng pin cao hơn yêu cầu {diff:.0f} phút",
-                        })
 
 
             return {
@@ -496,7 +436,9 @@ def compute_performance_scores(df: pd.DataFrame) -> pd.Series:
 
 
 def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -> list[dict[str, Any]]:
-    """Trích xuất chi tiết các vi phạm ràng buộc mềm của 1 dòng laptop đã chọn."""
+    """Trích xuất chi tiết các vi phạm ràng buộc mềm của 1 dòng laptop đã chọn.
+    Chỉ append violation khi thực sự vi phạm (không tạo violation âm).
+    """
     soft_violations = []
     for tracker in soft_trackers:
         field_type = tracker["type"]
@@ -507,7 +449,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
 
         if field_type == "price":
             actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
-            if op == "<=" and actual > target:
+            if (op == "<=" or op == "<") and actual > target:
                 diff: float = actual - target
                 soft_violations.append({
                     "field": "price",
@@ -515,7 +457,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
                     "actual": actual,
                     "violation": f"Vượt ngân sách {diff:,.0f}đ",
                 })
-            elif op == ">=":
+            elif (op == ">=" or op == ">") and actual < target:
                 diff: float = target - actual
                 soft_violations.append({
                     "field": "price",
@@ -525,7 +467,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
                 })
         elif field_type == "weight_kg":
             actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
-            if op == "<=" and actual > target:
+            if (op == "<=" or op == "<") and actual > target:
                 diff = actual - target
                 soft_violations.append({
                     "field": "weight_kg",
@@ -533,7 +475,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
                     "actual": actual,
                     "violation": f"Nặng hơn yêu cầu {diff:.2f}kg",
                 })
-            elif op == ">=":
+            elif (op == ">=" or op == ">") and actual < target:
                 diff = target - actual
                 soft_violations.append({
                     "field": "weight_kg",
@@ -543,7 +485,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
                 })
         elif field_type == "battery_minutes":
             actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
-            if op == ">=":
+            if (op == ">=" or op == ">") and actual < target:
                 diff = target - actual
                 soft_violations.append({
                     "field": "battery_minutes",
@@ -551,7 +493,7 @@ def _extract_soft_violations(chosen_row: pd.Series, soft_trackers: list[dict]) -
                     "actual": actual,
                     "violation": f"Thời lượng pin thấp hơn yêu cầu {diff:.0f} phút",
                 })
-            elif op == "<=":
+            elif (op == "<=" or op == "<") and actual > target:
                 diff = actual - target
                 soft_violations.append({
                     "field": "battery_minutes",
@@ -1062,11 +1004,16 @@ def solve_nearest_alternative(
             c_field: str = str(c.field)
             c_op: str = str(c.operator)
             c_val: Any = c.value
+            c_type: str = str(c.type).lower() if hasattr(c, "type") and c.type else "hard"
         elif isinstance(c, dict):
             c_field = str(c.get("field", ""))
-            c_op = str(c.get("operator", ""))
+            c_op = str(c.get("operator", c.get("op", "")))
             c_val = c.get("value")
+            c_type = str(c.get("type", "hard")).lower()
         else:
+            continue
+
+        if c_type != "hard":
             continue
 
         if c_val is None:
@@ -1327,8 +1274,8 @@ def solve_nearest_alternative(
                 "laptop_id": laptop_id,
                 "relevance_score": relevance_val,
                 "hard_violations": hard_violations_text,
-                "has_soft_violation": True,
-                "soft_violations": violations,
+                "has_soft_violation": False,
+                "soft_violations": [],
                 "violations": violations,
                 "recommendations": [
                     {

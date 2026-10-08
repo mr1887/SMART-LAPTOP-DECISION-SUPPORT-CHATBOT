@@ -214,8 +214,16 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
 
     # Header & Cảnh báo nới lỏng
     violation_text = result.get("violation_text") or result.get("explanation") or ""
+    has_soft_v = result.get("has_soft_violation", False)
     if is_feasible and not is_relaxed:
-        header = f"**Em tìm thấy mẫu laptop tối ưu nhất thỏa mãn 100% tiêu chí của bạn:**\n\n### **{laptop_name}**"
+        if has_soft_v and violation_text:
+            header = (
+                f"**Em tìm thấy mẫu laptop tối ưu nhất phù hợp với ngân sách và cấu hình chính:**\n"
+                f"*(Lưu ý: Mẫu máy chưa đạt hoàn toàn một số ưu tiên mềm: {violation_text})*\n\n"
+                f"### **{laptop_name}**"
+            )
+        else:
+            header = f"**Em tìm thấy mẫu laptop tối ưu nhất thỏa mãn 100% tiêu chí của bạn:**\n\n### **{laptop_name}**"
     elif is_relaxed:
         header = (
             f"**Thông báo tiêu chí (Nghiệm nới lỏng ràng buộc):**\n"
@@ -239,8 +247,11 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
         max_p = constraints.get("max_price")
         if max_p is None and "constraints" in constraints:
             for c in constraints.get("constraints", []):
-                if c.get("field") == "price" and c.get("op") == "<=":
-                    max_p = c.get("value")
+                c_field = c.field if hasattr(c, "field") else c.get("field")
+                c_op = c.operator if hasattr(c, "operator") else (c.get("operator") or c.get("op"))
+                c_val = c.value if hasattr(c, "value") else c.get("value")
+                if c_field == "price" and c_op in ("<=", "le", "lt"):
+                    max_p = c_val
                     break
         if is_relaxed and max_p and price_vnd > max_p:
             diff = price_vnd - max_p
@@ -414,7 +425,8 @@ def chat(req: ChatRequest):
     result = {
         "laptop_id": laptop_id,
         "is_feasible": bool(opt.get("is_feasible")),
-        "is_relaxed": has_soft_v,
+        "is_relaxed": (opt.get("status") == "RELAXED"),
+        "has_soft_violation": has_soft_v,
         "relevance_score": rel_score,
         "ai_score": rel_score,  # map sang ai_score legacy cho frontend
         "violations": violations,
