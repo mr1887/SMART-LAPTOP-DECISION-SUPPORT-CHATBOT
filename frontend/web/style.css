@@ -435,6 +435,215 @@ body {
   color: var(--color-canvas-white);
 }
 
+/* TOP-3 RECOMMENDATION CARDS */
+.top3-wrapper {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.nearest-alt-warning {
+  background: linear-gradient(90deg, #fffbeb 0%, #fef3c7 100%);
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  color: #92400e;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.4;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.08);
+}
+
+.nearest-alt-warning .warning-icon {
+  font-size: 1.05rem;
+}
+
+.top3-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+
+.recommendation-card {
+  background-color: var(--surface-canvas);
+  border: 1.5px solid var(--color-sea-fog);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 4px 14px rgba(11, 54, 88, 0.05);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.recommendation-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(11, 54, 88, 0.12);
+}
+
+.recommendation-card.best-match {
+  border-color: #3b82f6;
+  background: linear-gradient(180deg, #f0f7ff 0%, #ffffff 40%);
+}
+
+.recommendation-card.budget-alt {
+  border-color: #10b981;
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 40%);
+}
+
+.recommendation-card.perf-alt {
+  border-color: #8b5cf6;
+  background: linear-gradient(180deg, #faf5ff 0%, #ffffff 40%);
+}
+
+.recommendation-card.nearest-alt {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #fffbeb 0%, #ffffff 40%);
+}
+
+.card-badge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 6px;
+}
+
+.card-type-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-best-match {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badge-budget {
+  background-color: #d1fae5;
+  color: #047857;
+}
+
+.badge-perf {
+  background-color: #ede9fe;
+  color: #6d28d9;
+}
+
+.badge-nearest {
+  background-color: #fef3c7;
+  color: #b45309;
+}
+
+.card-scores-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.card-score {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-slate-channel);
+}
+
+.card-score.utility-score {
+  color: #0369a1;
+  background-color: #e0f2fe;
+  padding: 2px 7px;
+  border-radius: 12px;
+}
+
+.card-score.ai-score {
+  color: #475569;
+  background-color: #f1f5f9;
+  padding: 2px 7px;
+  border-radius: 12px;
+}
+
+.card-laptop-name {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--color-midnight-harbor);
+  line-height: 1.35;
+  margin-bottom: 6px;
+}
+
+.card-price {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #0284c7;
+  margin-bottom: 12px;
+}
+
+.card-specs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.82rem;
+  color: var(--color-slate-channel);
+  margin-bottom: 14px;
+}
+
+.card-spec-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.card-spec-label {
+  font-weight: 700;
+  min-width: 40px;
+  color: var(--color-midnight-harbor);
+}
+
+.card-spec-val {
+  color: var(--color-slate-channel);
+  word-break: break-word;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-sea-fog);
+  flex-wrap: wrap;
+}
+
+.card-btn-link {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  background-color: var(--color-ice-tint);
+  color: var(--color-signal-blue);
+  border: 1px solid var(--color-sea-fog);
+  transition: all 0.2s ease;
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.card-btn-link:hover {
+  background-color: var(--color-signal-blue);
+  color: #ffffff;
+}
+
 .audio-controls {
   margin-top: 14px;
   padding-top: 10px;
@@ -623,4 +832,11 @@ body {
   background-color: #fef2f2;
   border-color: #dc2626;
 }
+
+@media (max-width: 768px) {
+  .top3-container {
+    grid-template-columns: 1fr;
+  }
+}
+
 

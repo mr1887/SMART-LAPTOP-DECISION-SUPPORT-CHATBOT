@@ -189,7 +189,7 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
         )
 
     laptop_id = result.get("laptop_id")
-    is_relaxed = result.get("is_relaxed", False) or result.get("status") == "RELAXED" or bool(result.get("has_soft_violation", False))
+    is_relaxed = result.get("is_relaxed", False) or result.get("status") == "RELAXED"
     is_feasible = result.get("is_feasible", False)
     score = result.get("ai_score")
 

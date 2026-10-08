@@ -1184,7 +1184,7 @@ def solve_nearest_alternative(
                 if t_type == "price":
                     actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
                     target_num = float(target)
-                    if op == "<=" and actual > target_num:
+                    if (op == "<=" or op == "<") and actual > target_num:
                         diff = actual - target_num
                         violations.append({
                             "field": "price",
@@ -1192,7 +1192,7 @@ def solve_nearest_alternative(
                             "actual": actual,
                             "violation": f"Vượt ngân sách {diff:,.0f}đ",
                         })
-                    elif op == ">=":
+                    elif (op == ">=" or op == ">") and actual < target_num:
                         diff = target_num - actual
                         violations.append({
                             "field": "price",
