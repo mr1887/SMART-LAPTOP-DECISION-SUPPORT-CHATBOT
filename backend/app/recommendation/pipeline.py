@@ -20,7 +20,12 @@ import pandas as pd
 from app.nlp.nl2constraint import parse as parse_nlu
 from app.nlp.schema import RequirementSet
 from app.nlp.validator import validate_requirement_set
-from app.optimizer.ortools_solver import solve as solve_optimization
+from app.optimizer.ortools_solver import (
+    _find_column,
+    solve as solve_optimization,
+    solve_nearest_alternative,
+    solve_top3,
+)
 from app.retrieval.candidate_retriever import retrieve_candidates
 from app.scoring.predict import predict as predict_global_relevance
 from app.scoring.query_match import combine_scores, compute_query_match_score
@@ -139,23 +144,74 @@ def recommend(
     source_df = df if df is not None else load_dataset()
     candidates = retrieve_candidates(source_df, validated_req)
 
-    # Nếu không còn ứng viên nào thỏa mãn các ràng buộc cứng ban đầu
+    # Nếu không còn ứng viên nào thỏa mãn các ràng buộc cứng ban đầu -> Fallback Nearest Alternative
     if candidates.empty:
-        opt_infeasible = {
-            "laptop_id": None,
-            "status": "INFEASIBLE",
-            "is_feasible": False,
-            "relevance_score": None,
-            "hard_violations": ["Không có laptop nào trong cơ sở dữ liệu thỏa mãn các ràng buộc cứng."],
-            "has_soft_violation": False,
-            "soft_violations": [],
-        }
+        if source_df is None or source_df.empty:
+            opt_infeasible = {
+                "laptop_id": None,
+                "status": "INFEASIBLE",
+                "is_feasible": False,
+                "relevance_score": None,
+                "hard_violations": ["Không có laptop nào trong cơ sở dữ liệu."],
+                "has_soft_violation": False,
+                "soft_violations": [],
+                "violations": [],
+                "recommendations": [],
+            }
+            return {
+                "query": query,
+                "requirements": validated_req.model_dump(),
+                "candidates_count": 0,
+                "optimization": opt_infeasible,
+                "recommendations": [],
+                "recommended_laptops": [],
+                "recommended_laptop": None,
+            }
+
+        # Tính điểm relevance cho toàn bộ dataset nguồn để làm tie-breaker
+        fallback_scored = source_df.copy()
+        if "relevance_score" not in fallback_scored.columns and "AI_Score" not in fallback_scored.columns:
+            fallback_scored = predict_global_relevance(fallback_scored)
+        else:
+            if "relevance_score" not in fallback_scored.columns:
+                fallback_scored["relevance_score"] = fallback_scored["AI_Score"]
+            if "AI_Score" not in fallback_scored.columns:
+                fallback_scored["AI_Score"] = fallback_scored["relevance_score"]
+
+        q_match = compute_query_match_score(fallback_scored, validated_req)
+        fallback_scored["query_match_score"] = q_match
+        fallback_scored["final_relevance_score"] = combine_scores(
+            fallback_scored["relevance_score"],
+            fallback_scored["query_match_score"],
+            alpha=alpha
+        )
+
+        opt_fallback = solve_nearest_alternative(fallback_scored, validated_req)
+        recommendations = opt_fallback.get("recommendations", [])
+        recommended_laptops: list[dict[str, Any]] = []
+
+        id_col = _find_column(fallback_scored, ["laptop_model_id", "laptop_id"])
+        for rec in recommendations:
+            rec_id = rec.get("laptop_id")
+            if rec_id is not None:
+                if id_col and id_col in fallback_scored.columns:
+                    matched_rows = fallback_scored[fallback_scored[id_col] == rec_id]
+                else:
+                    matched_rows = fallback_scored[fallback_scored.index == rec_id]
+
+                if not matched_rows.empty:
+                    recommended_laptops.append(matched_rows.iloc[0].to_dict())
+
+        recommended_laptop = recommended_laptops[0] if recommended_laptops else None
+
         return {
             "query": query,
             "requirements": validated_req.model_dump(),
             "candidates_count": 0,
-            "optimization": opt_infeasible,
-            "recommended_laptop": None,
+            "optimization": opt_fallback,
+            "recommendations": recommendations,
+            "recommended_laptops": recommended_laptops,
+            "recommended_laptop": recommended_laptop,
         }
 
     # 4. Predict Global Relevance (LightGBM engagement proxy regression)
@@ -180,22 +236,35 @@ def recommend(
     )
     candidates_scored["final_relevance_score"] = final_scores
 
-    # 7. OR-Tools Optimization (CP-SAT Solver)
-    opt_result = solve_optimization(candidates_scored, validated_req)
+    # 7. OR-Tools Optimization (Top-3 CP-SAT Solver)
+    opt_result = solve_top3(candidates_scored, validated_req)
 
     # 8. Format Structured Result
-    recommended_laptop = None
-    if opt_result.get("is_feasible") and opt_result.get("laptop_id") is not None:
-        matched_rows = candidates_scored[
-            candidates_scored["laptop_model_id"] == opt_result["laptop_id"]
-        ]
-        if not matched_rows.empty:
-            recommended_laptop = matched_rows.iloc[0].to_dict()
+    recommendations = opt_result.get("recommendations", [])
+    recommended_laptops: list[dict[str, Any]] = []
+
+    id_col = _find_column(candidates_scored, ["laptop_model_id", "laptop_id"])
+
+    for rec in recommendations:
+        rec_id = rec.get("laptop_id")
+        if rec_id is not None:
+            if id_col and id_col in candidates_scored.columns:
+                matched_rows = candidates_scored[candidates_scored[id_col] == rec_id]
+            else:
+                matched_rows = candidates_scored[candidates_scored.index == rec_id]
+
+            if not matched_rows.empty:
+                laptop_detail = matched_rows.iloc[0].to_dict()
+                recommended_laptops.append(laptop_detail)
+
+    recommended_laptop = recommended_laptops[0] if recommended_laptops else None
 
     return {
         "query": query,
         "requirements": validated_req.model_dump(),
         "candidates_count": len(candidates_scored),
         "optimization": opt_result,
+        "recommendations": recommendations,
+        "recommended_laptops": recommended_laptops,
         "recommended_laptop": recommended_laptop,
     }

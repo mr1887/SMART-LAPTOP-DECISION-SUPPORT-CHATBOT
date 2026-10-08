@@ -108,6 +108,8 @@ class ChatResponse(BaseModel):
     constraints: dict
     result: dict | None = None
     laptop_details: dict | None = None
+    recommendations: list[dict] | None = None
+    recommended_laptops: list[dict] | None = None
 
 
 # ---------- Helper ----------
@@ -187,7 +189,7 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
         )
 
     laptop_id = result.get("laptop_id")
-    is_relaxed = result.get("is_relaxed", False)
+    is_relaxed = result.get("is_relaxed", False) or result.get("status") == "RELAXED" or bool(result.get("has_soft_violation", False))
     is_feasible = result.get("is_feasible", False)
     score = result.get("ai_score")
 
@@ -212,15 +214,21 @@ def _build_reply(constraints: dict, result: dict | None, laptop_details: dict | 
 
     # Header & Cảnh báo nới lỏng
     violation_text = result.get("violation_text") or result.get("explanation") or ""
-    if is_feasible:
+    if is_feasible and not is_relaxed:
         header = f"**Em tìm thấy mẫu laptop tối ưu nhất thỏa mãn 100% tiêu chí của bạn:**\n\n### **{laptop_name}**"
-    else:
+    elif is_relaxed:
         header = (
             f"**Thông báo tiêu chí (Nghiệm nới lỏng ràng buộc):**\n"
             f"Rất tiếc, trên thị trường hiện không có mẫu laptop nào thỏa mãn 100% đồng thời mọi tiêu chí của bạn "
             f"({violation_text}).\n\n"
             f"**Nghiệm gần nhất từ bộ giải toán (Soft Constraint):**\n"
             f"Hệ thống đã tự động nới lỏng tiêu chí và tìm ra mẫu laptop tiệm cận nhất với yêu cầu của bạn:\n\n"
+            f"### **{laptop_name}**"
+        )
+    else:
+        header = (
+            f"**Thông báo tiêu chí:**\n"
+            f"Chưa tìm thấy mẫu laptop thỏa mãn yêu cầu của bạn.\n\n"
             f"### **{laptop_name}**"
         )
 
@@ -393,6 +401,9 @@ def chat(req: ChatRequest):
     rec_res = _sanitize_for_json(rec_res)
     merged_constraints = rec_res.get("requirements", {})
     opt = rec_res.get("optimization", {})
+    recommendations = rec_res.get("recommendations", [])
+    raw_recommended_laptops = rec_res.get("recommended_laptops", [])
+
     laptop_id = int(opt["laptop_id"]) if opt.get("laptop_id") is not None else None
     rel_score = float(opt["relevance_score"]) if opt.get("relevance_score") is not None else None
     has_soft_v = bool(opt.get("has_soft_violation", False))
@@ -402,7 +413,7 @@ def chat(req: ChatRequest):
 
     result = {
         "laptop_id": laptop_id,
-        "is_feasible": bool(opt.get("is_feasible")) and not has_soft_v,
+        "is_feasible": bool(opt.get("is_feasible")),
         "is_relaxed": has_soft_v,
         "relevance_score": rel_score,
         "ai_score": rel_score,  # map sang ai_score legacy cho frontend
@@ -413,15 +424,48 @@ def chat(req: ChatRequest):
         "soft_violations": soft_vs,
     }
 
+    df = None
+    try:
+        df = _load_scored_df()
+    except Exception:
+        pass
+
     laptop_details = None
-    if laptop_id is not None:
+    if laptop_id is not None and df is not None:
         try:
-            df = _load_scored_df()
             laptop_details = _get_laptop_details(df, laptop_id)
             if laptop_details is not None:
                 laptop_details = _sanitize_for_json(laptop_details)
         except Exception:
             pass
+
+    # Xây dựng danh sách recommended_laptops với rich details cho từng rank
+    recommended_laptops = []
+    if recommendations:
+        for rec in recommendations:
+            rid = rec.get("laptop_id")
+            if rid is not None:
+                detail = None
+                if df is not None:
+                    detail = _get_laptop_details(df, int(rid))
+                if detail is None:
+                    for raw_l in raw_recommended_laptops:
+                        if raw_l.get("laptop_model_id") == rid or raw_l.get("laptop_id") == rid:
+                            detail = raw_l
+                            break
+                if detail:
+                    detail = _sanitize_for_json(detail)
+                    detail["rank"] = rec.get("rank")
+                    detail["type"] = rec.get("type")
+                    detail["utility_score"] = rec.get("utility_score")
+                    detail["performance_score"] = rec.get("performance_score")
+                    recommended_laptops.append(detail)
+    elif raw_recommended_laptops:
+        recommended_laptops = [_sanitize_for_json(l) for l in raw_recommended_laptops]
+
+    # Backward compatibility: laptop_details cũ map tới recommended_laptop đầu tiên nếu có
+    if laptop_details is None and recommended_laptops:
+        laptop_details = recommended_laptops[0]
 
     # Lưu lại session
     session_manager.save_state(session_id, {
@@ -429,7 +473,7 @@ def chat(req: ChatRequest):
         "last_laptop_details": laptop_details or last_laptop_details,
     })
 
-    # Xây dựng câu trả lời tư vấn
+    # Xây dựng câu trả lời tư vấn (1 reply tổng quát duy nhất, không gọi riêng lẻ để tiết kiệm chi phí)
     reply = None
     if EXPLANATION_MODE == "gemini" and result.get("laptop_id") is not None:
         try:
@@ -466,6 +510,8 @@ def chat(req: ChatRequest):
         constraints=merged_constraints,
         result=result,
         laptop_details=laptop_details,
+        recommendations=recommendations,
+        recommended_laptops=recommended_laptops,
     )
 
 

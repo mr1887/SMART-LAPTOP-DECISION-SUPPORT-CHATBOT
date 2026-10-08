@@ -208,7 +208,7 @@ class TestOrToolsTop1Verification(unittest.TestCase):
         self.assertIn("3,000,000", res["soft_violations"][0]["violation"])
 
     def test_09_hard_infeasible(self):
-        """9. Hard infeasible: không có laptop thỏa hard constraints -> INFEASIBLE an toàn, không crash."""
+        """9. Hard infeasible: không có laptop thỏa hard constraints -> Fallback 1 nearest alternative, status RELAXED, is_feasible False."""
         rec_res = recommend(
             query="Cần tìm laptop giá đúng 5 triệu có card rời RTX 4060",
             df=self.df,
@@ -217,20 +217,24 @@ class TestOrToolsTop1Verification(unittest.TestCase):
         self.assertIn("optimization", rec_res)
         opt = rec_res["optimization"]
 
-        self.assertIsNone(opt["laptop_id"])
-        self.assertEqual(opt["status"], "INFEASIBLE")
+        self.assertEqual(opt["status"], "RELAXED")
         self.assertFalse(opt["is_feasible"])
-        self.assertIsNone(opt["relevance_score"])
+        self.assertIsNotNone(opt["laptop_id"])
+        self.assertEqual(opt["laptop_id"], 2)  # Laptop 2 có RTX 4060, gần nhất với yêu cầu
         self.assertIsInstance(opt["hard_violations"], list)
         self.assertGreater(len(opt["hard_violations"]), 0)
-        self.assertFalse(opt["has_soft_violation"])
-        self.assertEqual(opt["soft_violations"], [])
-        self.assertIsNone(rec_res["recommended_laptop"])
+        self.assertTrue(opt["has_soft_violation"])
+
+        self.assertEqual(len(rec_res["recommendations"]), 1)
+        self.assertEqual(rec_res["recommendations"][0]["type"], "nearest_alternative")
+        self.assertIsNotNone(rec_res["recommended_laptop"])
+        self.assertEqual(rec_res["recommended_laptop"]["laptop_model_id"], 2)
 
         # Chat API reply an toàn
         from app.api.routes.chat import _build_reply
-        reply = _build_reply(rec_res["requirements"], opt, None)
-        self.assertIn("chưa tìm thấy mẫu laptop nào đáp ứng trọn vẹn", reply)
+        reply = _build_reply(rec_res["requirements"], opt, rec_res["recommended_laptop"])
+        self.assertIn("Thông báo tiêu chí", reply)
+        self.assertIn("Nghiệm nới lỏng ràng buộc", reply)
 
     def test_10_feasible_with_soft_violation(self):
         """10. Feasible + Soft violation: Thỏa hard constraint nhưng có soft violation -> is_feasible = True, has_soft_violation = True."""
