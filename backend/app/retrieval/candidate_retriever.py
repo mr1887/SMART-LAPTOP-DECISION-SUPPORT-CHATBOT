@@ -4,7 +4,7 @@ Chỉ lọc các ràng buộc CỨNG (hard constraints), bỏ qua các ràng bu�
 """
 
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 import pandas as pd
 
 from app.nlp.schema import Constraint, RequirementSet
@@ -43,7 +43,7 @@ def _find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
 
 def retrieve_candidates(
     df: pd.DataFrame,
-    requirements: Union[RequirementSet, dict[str, Any], Any]
+    requirements: Union[RequirementSet, dict[str, Any]]
 ) -> pd.DataFrame:
     """
     Lọc các ứng viên thỏa mãn các ràng buộc CỨNG (hard constraints) an toàn trước khi tối ưu:
@@ -54,36 +54,40 @@ def retrieve_candidates(
     if df is None or df.empty:
         return pd.DataFrame() if df is None else df.copy()
 
-    filtered_df = df.copy()
+    filtered_df: pd.DataFrame = df.copy()
 
     # Chuẩn hóa requirements thành danh sách constraints
     constraints_list: list[Union[Constraint, dict[str, Any]]] = []
     if isinstance(requirements, RequirementSet):
-        constraints_list = requirements.constraints
+        constraints_list = list(requirements.constraints)
     elif isinstance(requirements, dict):
-        if "constraints" in requirements and isinstance(requirements["constraints"], list):
-            constraints_list = requirements["constraints"]
+        raw_constraints = requirements.get("constraints")
+        if isinstance(raw_constraints, list):
+            constraints_list = raw_constraints
         else:
             from app.nlp.nl2constraint import convert_legacy_regex_to_requirement_set
             req_set = convert_legacy_regex_to_requirement_set(requirements)
-            constraints_list = req_set.get("constraints", [])
+            if isinstance(req_set, dict):
+                req_constraints = req_set.get("constraints")
+                if isinstance(req_constraints, list):
+                    constraints_list = req_constraints
 
     for c in constraints_list:
         if isinstance(c, Constraint):
-            c_field = c.field
-            c_op = c.operator
-            c_val = c.value
-            c_type = c.type
+            c_field: str = str(c.field)
+            c_op: str = str(c.operator)
+            c_val: Any = c.value
+            c_type: str = str(c.type)
         elif isinstance(c, dict):
-            c_field = c.get("field")
-            c_op = c.get("operator")
+            c_field = str(c.get("field", ""))
+            c_op = str(c.get("operator", ""))
             c_val = c.get("value")
-            c_type = c.get("type", "hard")
+            c_type = str(c.get("type", "hard"))
         else:
             continue
 
         # Chỉ lọc ràng buộc cứng (hard)
-        if c_type != "hard":
+        if c_type != "hard" or c_val is None:
             continue
 
         if c_field == "price":
@@ -93,12 +97,13 @@ def retrieve_candidates(
                 continue
             try:
                 val_num = float(c_val)
+                series_col = filtered_df[col]
                 if c_op == "<=":
-                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col <= val_num])
                 elif c_op == ">=":
-                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col >= val_num])
                 elif c_op == "=":
-                    filtered_df = filtered_df[filtered_df[col] == val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col == val_num])
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering price ({e}), skipping constraint.")
 
@@ -109,12 +114,13 @@ def retrieve_candidates(
                 continue
             try:
                 val_num = float(c_val)
+                series_col = filtered_df[col]
                 if c_op == ">=":
-                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col >= val_num])
                 elif c_op == "<=":
-                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col <= val_num])
                 elif c_op == "=":
-                    filtered_df = filtered_df[filtered_df[col] == val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col == val_num])
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering ram_gb ({e}), skipping constraint.")
 
@@ -125,12 +131,13 @@ def retrieve_candidates(
                 continue
             try:
                 val_num = float(c_val)
+                series_col = filtered_df[col]
                 if c_op == ">=":
-                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col >= val_num])
                 elif c_op == "<=":
-                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col <= val_num])
                 elif c_op == "=":
-                    filtered_df = filtered_df[filtered_df[col] == val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col == val_num])
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering storage_gb ({e}), skipping constraint.")
 
@@ -141,12 +148,13 @@ def retrieve_candidates(
                 continue
             try:
                 val_num = float(c_val)
+                series_col = filtered_df[col]
                 if c_op == "<=":
-                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col <= val_num])
                 elif c_op == ">=":
-                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col >= val_num])
                 elif c_op == "=":
-                    filtered_df = filtered_df[filtered_df[col] == val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col == val_num])
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering weight_kg ({e}), skipping constraint.")
 
@@ -157,12 +165,13 @@ def retrieve_candidates(
                 continue
             try:
                 val_num = float(c_val)
+                series_col = filtered_df[col]
                 if c_op == ">=":
-                    filtered_df = filtered_df[filtered_df[col] >= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col >= val_num])
                 elif c_op == "<=":
-                    filtered_df = filtered_df[filtered_df[col] <= val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col <= val_num])
                 elif c_op == "=":
-                    filtered_df = filtered_df[filtered_df[col] == val_num]
+                    filtered_df = cast(pd.DataFrame, filtered_df[series_col == val_num])
             except Exception as e:
                 print(f"[CandidateRetriever Warning] Error filtering battery_minutes ({e}), skipping constraint.")
 
@@ -172,12 +181,13 @@ def retrieve_candidates(
             req_val = bool(c_val)
 
             if disc_col is not None:
-                filtered_df = filtered_df[filtered_df[disc_col] == req_val]
+                filtered_df = cast(pd.DataFrame, filtered_df[filtered_df[disc_col] == req_val])
             elif gpu_name_col is not None:
-                mask = filtered_df[gpu_name_col].apply(
+                gpu_series = filtered_df[gpu_name_col]
+                mask = gpu_series.apply(
                     lambda g: _is_discrete_gpu(g) if req_val else not _is_discrete_gpu(g)
                 )
-                filtered_df = filtered_df[mask]
+                filtered_df = cast(pd.DataFrame, filtered_df[mask])
             else:
                 print("[CandidateRetriever Warning] Column for GPU not found in DataFrame, skipping 'gpu_discrete' constraint.")
 
@@ -187,7 +197,8 @@ def retrieve_candidates(
                 print("[CandidateRetriever Warning] Column 'gpu_name' not found in DataFrame, skipping 'gpu_keyword' constraint.")
                 continue
             kw_str = str(c_val).strip()
-            mask = filtered_df[gpu_name_col].apply(lambda g: _matches_gpu_keyword(g, kw_str))
-            filtered_df = filtered_df[mask]
+            gpu_series = filtered_df[gpu_name_col]
+            mask = gpu_series.apply(lambda g: _matches_gpu_keyword(g, kw_str))
+            filtered_df = cast(pd.DataFrame, filtered_df[mask])
 
     return filtered_df

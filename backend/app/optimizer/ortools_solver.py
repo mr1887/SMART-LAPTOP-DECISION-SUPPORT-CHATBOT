@@ -6,7 +6,7 @@ Hỗ trợ:
 """
 
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 import numpy as np
 import pandas as pd
 from ortools.sat.python import cp_model
@@ -65,7 +65,7 @@ def _find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
 
 def solve_hard_constraints(
     candidates: pd.DataFrame,
-    requirements: Union[RequirementSet, dict[str, Any], Any],
+    requirements: Union[RequirementSet, dict[str, Any]],
     score_scale: int = 10000,
 ) -> dict[str, Any]:
     """
@@ -76,7 +76,7 @@ def solve_hard_constraints(
 
 def solve(
     candidates: pd.DataFrame,
-    requirements: Union[RequirementSet, dict[str, Any], Any],
+    requirements: Union[RequirementSet, dict[str, Any]],
     score_scale: int = 10000,
 ) -> dict[str, Any]:
     """
@@ -116,17 +116,21 @@ def solve(
     # Chuẩn hóa requirements thành danh sách constraints
     constraints_list: list[Union[Constraint, dict[str, Any]]] = []
     if isinstance(requirements, RequirementSet):
-        constraints_list = requirements.constraints
+        constraints_list = list(requirements.constraints)
     elif isinstance(requirements, dict):
-        if "constraints" in requirements and isinstance(requirements["constraints"], list):
-            constraints_list = requirements["constraints"]
+        raw_constraints = requirements.get("constraints")
+        if isinstance(raw_constraints, list):
+            constraints_list = raw_constraints
         else:
             from app.nlp.nl2constraint import convert_legacy_regex_to_requirement_set
             req_set = convert_legacy_regex_to_requirement_set(requirements)
-            constraints_list = req_set.get("constraints", [])
+            if isinstance(req_set, dict):
+                req_constraints = req_set.get("constraints")
+                if isinstance(req_constraints, list):
+                    constraints_list = req_constraints
 
     # Khởi tạo mô hình CP-SAT
-    model = cp_model.CpModel()
+    model: Any = cp_model.CpModel()
     indices = list(candidates.index)
 
     # Biến quyết định: x[i] = 1 nếu laptop i được chọn, ngược lại = 0
@@ -141,16 +145,19 @@ def solve(
     # Áp dụng các ràng buộc (Hard & Soft)
     for c_idx, c in enumerate(constraints_list):
         if isinstance(c, Constraint):
-            c_field = c.field
-            c_op = c.operator
-            c_val = c.value
-            c_type = c.type
+            c_field: str = str(c.field)
+            c_op: str = str(c.operator)
+            c_val: Any = c.value
+            c_type: str = str(c.type)
         elif isinstance(c, dict):
-            c_field = c.get("field")
-            c_op = c.get("operator")
+            c_field = str(c.get("field", ""))
+            c_op = str(c.get("operator", ""))
             c_val = c.get("value")
-            c_type = c.get("type", "hard")
+            c_type = str(c.get("type", "hard"))
         else:
+            continue
+
+        if c_val is None:
             continue
 
         is_hard = (c_type == "hard")
@@ -328,7 +335,7 @@ def solve(
         model.Maximize(total_relevance)
 
     # Tiến hành giải bài toán
-    solver = cp_model.CpSolver()
+    solver: Any = cp_model.CpSolver()
     solver_status = solver.Solve(model)
 
     if solver_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -347,23 +354,23 @@ def solve(
             soft_violations = []
             for tracker in soft_trackers:
                 field_type = tracker["type"]
-                target = tracker["target"]
+                target: float = float(tracker["target"])
                 col = tracker["col"]
                 op = tracker["op"]
                 actual_raw = chosen_row.get(col)
 
                 if field_type == "price":
-                    actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
+                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
                     if op == "<=" and actual > target:
-                        diff = actual - target
+                        diff: float = actual - target
                         soft_violations.append({
                             "field": "price",
                             "target": target,
                             "actual": actual,
                             "violation": f"Vượt ngân sách {diff:,.0f}đ",
                         })
-                    elif op == ">=" and actual < target:
-                        diff = target - actual
+                    elif op == ">=":
+                        diff: float = target - actual
                         soft_violations.append({
                             "field": "price",
                             "target": target,
@@ -371,17 +378,17 @@ def solve(
                             "violation": f"Thấp hơn ngân sách tối thiểu {diff:,.0f}đ",
                         })
                 elif field_type == "weight_kg":
-                    actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
+                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
                     if op == "<=" and actual > target:
-                        diff = actual - target
+                        diff: float = actual - target
                         soft_violations.append({
                             "field": "weight_kg",
                             "target": target,
                             "actual": actual,
                             "violation": f"Nặng hơn yêu cầu {diff:.2f}kg",
                         })
-                    elif op == ">=" and actual < target:
-                        diff = target - actual
+                    elif op == ">=":
+                        diff: float = target - actual
                         soft_violations.append({
                             "field": "weight_kg",
                             "target": target,
@@ -389,23 +396,24 @@ def solve(
                             "violation": f"Nhẹ hơn yêu cầu {diff:.2f}kg",
                         })
                 elif field_type == "battery_minutes":
-                    actual = float(actual_raw) if pd.notna(actual_raw) else 0.0
-                    if op == ">=" and actual < target:
-                        diff = target - actual
+                    actual: float = float(actual_raw) if pd.notna(actual_raw) else 0.0
+                    if op == ">=":
+                        diff: float = target - actual
                         soft_violations.append({
                             "field": "battery_minutes",
                             "target": target,
                             "actual": actual,
                             "violation": f"Thời lượng pin thấp hơn yêu cầu {diff:.0f} phút",
                         })
-                    elif op == "<=" and actual > target:
-                        diff = actual - target
+                    elif op == "<=":
+                        diff: float = actual - target
                         soft_violations.append({
                             "field": "battery_minutes",
                             "target": target,
                             "actual": actual,
                             "violation": f"Thời lượng pin cao hơn yêu cầu {diff:.0f} phút",
                         })
+
 
             return {
                 "laptop_id": laptop_id,

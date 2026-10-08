@@ -29,8 +29,12 @@ _BACKEND_DIR = _PROJECT_ROOT / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
+
 from app.baselines.llm_only import recommend_llm_only
-from app.evaluation.logger import EvaluationLogger, ExperimentRecord
+
+from app.evaluation.logger import EvaluationLogger
+
+
 from app.recommendation.pipeline import recommend as recommend_hybrid
 
 
