@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 import pandas as pd
 
-from app.nlp.nl2constraint import parse as parse_nlu
+from app.nlp.nl2constraint import parse as parse_nlu, classify_context_action
 from app.nlp.schema import RequirementSet
 from app.nlp.validator import validate_requirement_set
 from app.optimizer.ortools_solver import (
@@ -173,9 +173,21 @@ def recommend(
     # 1. Parse NLU
     raw_nlu = parse_nlu(query, use_gemini=use_gemini_nlu)
 
-    # Một yêu cầu mới đã nêu cả nhu cầu chính và ngân sách được xem là
-    # "fresh search": không mang theo GPU/tag/constraint cũ từ session.
-    if current_constraints and not _is_fresh_search_request(raw_nlu):
+    # Dialogue-context action:
+    # ADD     -> giữ context cũ và bổ sung field mới.
+    # UPDATE  -> merge theo field; field mới ghi đè field cũ cùng tên.
+    # REPLACE -> bắt đầu một yêu cầu tìm kiếm mới, bỏ context cũ.
+    context_action = classify_context_action(
+        query,
+        parsed_requirements=raw_nlu,
+        current_requirements=(
+            current_constraints.model_dump()
+            if isinstance(current_constraints, RequirementSet)
+            else (current_constraints or {})
+        ),
+    )
+
+    if current_constraints and context_action in ("ADD", "UPDATE"):
         merged_raw = _merge_requirements(current_constraints, raw_nlu)
     else:
         merged_raw = raw_nlu
@@ -203,6 +215,7 @@ def recommend(
             }
             return {
                 "query": query,
+                "context_action": context_action,
                 "requirements": validated_req.model_dump(),
                 "candidates_count": 0,
                 "optimization": opt_infeasible,
@@ -249,6 +262,7 @@ def recommend(
 
         return {
             "query": query,
+            "context_action": context_action,
             "requirements": validated_req.model_dump(),
             "candidates_count": 0,
             "optimization": opt_fallback,
@@ -332,6 +346,7 @@ def recommend(
 
     return {
         "query": query,
+        "context_action": context_action,
         "requirements": validated_req.model_dump(),
         "candidates_count": len(candidates_scored),
         "optimization": opt_result,
