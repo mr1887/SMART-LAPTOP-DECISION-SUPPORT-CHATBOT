@@ -342,6 +342,108 @@ def parse_regex(text: str) -> dict:
     }
 
 
+def classify_context_action(
+    text: str,
+    parsed_requirements: Optional[dict] = None,
+    current_requirements: Optional[dict] = None,
+) -> str:
+    """Phân loại cách áp dụng yêu cầu mới vào context hội thoại.
+
+    Trả về một trong:
+    - "ADD": bổ sung tiêu chí mới và giữ các tiêu chí cũ.
+    - "UPDATE": sửa/ghi đè một hoặc vài tiêu chí hiện có, giữ phần còn lại.
+    - "REPLACE": bắt đầu một yêu cầu tìm kiếm mới, không mang context cũ sang.
+
+    Hàm dùng rule deterministic để tránh phụ thuộc thêm một LLM call.
+    """
+    clean = re.sub(r"\s+", " ", (text or "").strip().lower())
+    parsed = parsed_requirements or {}
+    current = current_requirements or {}
+
+    constraints = parsed.get("constraints", []) if isinstance(parsed, dict) else []
+    new_tags = set(parsed.get("required_tags", []) or []) if isinstance(parsed, dict) else set()
+    old_tags = set(current.get("required_tags", []) or []) if isinstance(current, dict) else set()
+
+    new_fields = {
+        c.get("field")
+        for c in constraints
+        if isinstance(c, dict) and c.get("field")
+    }
+
+    # 1) Tín hiệu rõ ràng rằng user đang chuyển sang bài toán khác.
+    replace_patterns = [
+        r"\b(?:tìm|tư vấn|gợi ý|chọn)\s+(?:cho\s+)?(?:tôi\s+)?(?:một\s+)?laptop\b",
+        r"\b(?:bây giờ|giờ)\s+(?:tôi\s+)?(?:muốn|cần)\b",
+        r"\bchuyển\s+sang\b",
+        r"\bthôi\s+(?:tìm|tư vấn|chọn)\b",
+        r"\btìm\s+lại\b",
+        r"\bbắt\s+đầu\s+lại\b",
+    ]
+
+    explicit_replace = any(re.search(p, clean) for p in replace_patterns)
+
+    # Một nhu cầu sử dụng mới khác nhu cầu cũ là tín hiệu mạnh cho REPLACE,
+    # đặc biệt khi câu mới cũng đưa ra ngân sách hoặc mang dạng yêu cầu hoàn chỉnh.
+    tag_changed = bool(new_tags and old_tags and new_tags != old_tags)
+    has_price = "price" in new_fields
+    full_new_search = bool(new_tags and has_price)
+
+    if explicit_replace and (new_tags or constraints):
+        return "REPLACE"
+
+    if tag_changed and (has_price or any(k in clean for k in ["tư vấn", "tìm", "muốn", "cần"])):
+        return "REPLACE"
+
+    if full_new_search and old_tags and new_tags != old_tags:
+        return "REPLACE"
+
+    # 2) Tín hiệu UPDATE: thay đổi giá trị của tiêu chí đã có.
+    update_patterns = [
+        r"\b(?:đổi|thay)\b",
+        r"\b(?:nâng|tăng)\s+(?:ngân\s+sách|giá|ram|ssd|pin)?\b",
+        r"\b(?:giảm|hạ)\s+(?:ngân\s+sách|giá|cân\s+nặng)?\b",
+        r"\bthôi\b",
+        r"\b(?:không\s+cần|bỏ)\b",
+        r"\b(?:lên|xuống)\s+\d",
+    ]
+
+    if any(re.search(p, clean) for p in update_patterns):
+        return "UPDATE"
+
+    # Nếu field mới trùng field đang tồn tại thì về bản chất là cập nhật field đó.
+    old_constraints = current.get("constraints", []) if isinstance(current, dict) else []
+    old_fields = {
+        c.get("field")
+        for c in old_constraints
+        if isinstance(c, dict) and c.get("field")
+    }
+    if new_fields & old_fields:
+        return "UPDATE"
+
+    # 3) ADD: các câu bổ sung / follow-up.
+    add_patterns = [
+        r"\b(?:thêm|ngoài\s+ra|cũng\s+cần|cũng\s+muốn|ưu\s+tiên\s+thêm)\b",
+        r"\b(?:và|với)\s+(?:ram|ssd|pin|cân\s+nặng|gpu|card)\b",
+        r"\b(?:ưu\s+tiên|cần)\s+(?:nhẹ|pin|ram|ssd|mỏng)\b",
+    ]
+
+    if any(re.search(p, clean) for p in add_patterns):
+        return "ADD"
+
+    # Mặc định: nếu đã có context và câu mới chỉ đưa thêm field/tag chưa có,
+    # coi là bổ sung; nếu chưa có context thì REPLACE tương đương khởi tạo mới.
+    has_current = bool(
+        (current.get("constraints") if isinstance(current, dict) else None)
+        or (current.get("preferences") if isinstance(current, dict) else None)
+        or (current.get("required_tags") if isinstance(current, dict) else None)
+    )
+
+    if not has_current:
+        return "REPLACE"
+
+    return "ADD"
+
+
 def detect_intent(text: str, has_extracted_constraints: bool = False) -> str:
     """Xác định ý định người dùng từ câu chat:
     - "GREETING": Chào hỏi ("hello", "chào bạn", "alo"...)
