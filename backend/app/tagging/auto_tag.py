@@ -1,79 +1,85 @@
 """
-Auto-tagging module - Gán nhãn nhu cầu cho từng laptop dựa trên thông số kỹ thuật.
-
-Các nhãn (boolean columns) được tính toán từ thông số phần cứng:
-    is_gaming_friendly      - phù hợp chơi game
-    is_office_friendly      - phù hợp văn phòng/học tập
-    is_programming_friendly - phù hợp lập trình
-    is_graphic_friendly     - phù hợp đồ họa/thiết kế
-
-Kết quả được dùng trong Tầng 3 (Optimizer) để lọc cứng theo nhu cầu.
+Auto-tagging module - gán nhãn nhu cầu từ thông số laptop.
+Các tag luôn được chuẩn hóa về boolean thật để retrieval/scoring dùng nhất quán.
 """
 
+from typing import Any
 import pandas as pd
 
-# ---------- Ngưỡng tự động tag (có thể điều chỉnh) ----------
-GAMING_CPU_MIN       = 8_000    # Geekbench 6 multi-core
-GAMING_IS_GAMING     = True     # dùng flag is_gaming_laptop từ dataset gốc
+GAMING_CPU_MIN = 8_000
+OFFICE_WEIGHT_MAX = 2.0
+OFFICE_BATTERY_MIN = 360
+PROGRAMMING_CPU_MIN = 6_000
+GRAPHIC_CPU_MIN = 8_000
 
-OFFICE_WEIGHT_MAX    = 2.0      # kg
-OFFICE_BATTERY_MIN   = 360      # phút (6 tiếng)
 
-PROGRAMMING_CPU_MIN  = 6_000    # Geekbench 6 multi-core
+def _safe_bool_series(series: pd.Series) -> pd.Series:
+    """Chuẩn hóa bool/0/1/"True"/"False" thành boolean thật."""
+    true_values = {"true", "1", "yes", "y", "t", "có", "co"}
+    false_values = {"false", "0", "no", "n", "f", "không", "khong", "", "none", "nan"}
 
-GRAPHIC_CPU_MIN      = 8_000    # Geekbench 6 multi-core
+    def _to_bool(v: Any) -> bool:
+        if pd.isna(v):
+            return False
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        s = str(v).strip().lower()
+        if s in true_values:
+            return True
+        if s in false_values:
+            return False
+        return False
+
+    return series.map(_to_bool).astype(bool)
 
 
 def tag_laptops(df: pd.DataFrame) -> pd.DataFrame:
-    """Thêm/cập nhật các cột nhãn nhu cầu vào DataFrame.
-
-    Args:
-        df: DataFrame laptop đã có các cột kỹ thuật
-            (is_gaming_laptop, geekbench_cpu_multi, laptop_weight,
-             office_battery_minutes_final / office_battery_result_minutes,
-             is_workstation)
-
-    Returns:
-        DataFrame gốc với các cột nhãn được thêm/cập nhật.
-    """
+    """Tạo lại 4 use-case tags một cách deterministic và nhất quán."""
     df = df.copy()
+    idx = df.index
 
-    battery_col = (
-        "office_battery_minutes_final"
-        if "office_battery_minutes_final" in df.columns
-        else "office_battery_result_minutes"
+    cpu_multi = (
+        pd.to_numeric(df["geekbench_cpu_multi"], errors="coerce").fillna(0)
+        if "geekbench_cpu_multi" in df.columns
+        else pd.Series(0, index=idx, dtype=float)
     )
 
-    # --- Gaming ---
+    # Gaming: ưu tiên flag gốc; nếu không có mới fallback CPU threshold.
     if "is_gaming_laptop" in df.columns:
-        # Ưu tiên dùng flag gốc nếu có
-        df["is_gaming_friendly"] = df["is_gaming_laptop"].fillna(False).astype(bool)
-    elif "geekbench_cpu_multi" in df.columns:
-        df["is_gaming_friendly"] = df["geekbench_cpu_multi"] >= GAMING_CPU_MIN
+        gaming = _safe_bool_series(df["is_gaming_laptop"])
     else:
-        df["is_gaming_friendly"] = False
+        gaming = cpu_multi >= GAMING_CPU_MIN
+    df["is_gaming_friendly"] = gaming.astype(bool)
 
-    # --- Office / học tập ---
-    office_cond = pd.Series(True, index=df.index)
+    # Office/học tập: không coi gaming laptop là office-friendly.
+    # Sau đó áp dụng điều kiện mỏng/nhẹ và pin nếu dữ liệu tương ứng tồn tại.
+    office = ~gaming
     if "laptop_weight" in df.columns:
-        office_cond &= df["laptop_weight"].fillna(999) <= OFFICE_WEIGHT_MAX
-    if battery_col in df.columns:
-        office_cond &= df[battery_col].fillna(0) >= OFFICE_BATTERY_MIN
-    df["is_office_friendly"] = office_cond
+        weight = pd.to_numeric(df["laptop_weight"], errors="coerce")
+        office &= weight.notna() & (weight <= OFFICE_WEIGHT_MAX)
 
-    # --- Lập trình ---
-    if "geekbench_cpu_multi" in df.columns:
-        df["is_programming_friendly"] = df["geekbench_cpu_multi"].fillna(0) >= PROGRAMMING_CPU_MIN
-    else:
-        # Nếu thiếu benchmark, giả định không phù hợp lập trình nặng
-        df["is_programming_friendly"] = False
+    battery_col = None
+    if "office_battery_minutes_final" in df.columns:
+        battery_col = "office_battery_minutes_final"
+    elif "office_battery_result_minutes" in df.columns:
+        battery_col = "office_battery_result_minutes"
 
-    # --- Đồ họa / Thiết kế ---
-    graphic_cond = pd.Series(False, index=df.index)
-    if "geekbench_cpu_multi" in df.columns:
-        graphic_cond |= df["geekbench_cpu_multi"].fillna(0) >= GRAPHIC_CPU_MIN
+    if battery_col:
+        battery = pd.to_numeric(df[battery_col], errors="coerce")
+        # Chỉ bắt buộc >= 6h khi có dữ liệu pin; missing không tự biến gaming thành office.
+        office &= battery.notna() & (battery >= OFFICE_BATTERY_MIN)
+
+    df["is_office_friendly"] = office.astype(bool)
+
+    # Programming: CPU đủ mạnh; không loại gaming vì gaming laptop vẫn có thể code tốt.
+    df["is_programming_friendly"] = (cpu_multi >= PROGRAMMING_CPU_MIN).astype(bool)
+
+    # Graphic: CPU mạnh hoặc workstation.
+    graphic = cpu_multi >= GRAPHIC_CPU_MIN
     if "is_workstation" in df.columns:
-        graphic_cond |= df["is_workstation"].fillna(False).astype(bool)
-    df["is_graphic_friendly"] = graphic_cond
+        graphic |= _safe_bool_series(df["is_workstation"])
+    df["is_graphic_friendly"] = graphic.astype(bool)
 
     return df
