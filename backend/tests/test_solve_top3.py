@@ -163,6 +163,70 @@ class TestSolveTop3(unittest.TestCase):
         self.assertEqual(recs[2]["laptop_id"], 3)
         self.assertAlmostEqual(recs[2]["performance_score"], 1.0, places=2)
 
+    def test_02b_budget_alternative_is_strictly_cheaper_than_top1(self):
+        """Rank 2 chỉ được gọi là budget_alternative khi thực sự rẻ hơn Rank 1."""
+        req = RequirementSet(
+            constraints=[
+                Constraint(field="ram_gb", operator=">=", value=16, type="hard")
+            ]
+        )
+        res = solve_top3(self.df, req)
+        recs = res["recommendations"]
+
+        budget = next((r for r in recs if r["type"] == "budget_alternative"), None)
+        self.assertIsNotNone(budget)
+        self.assertLess(budget["price"], recs[0]["price"])
+
+    def test_02c_no_misleading_budget_if_all_remaining_are_more_expensive(self):
+        """Nếu không có máy rẻ hơn Top 1 thì không được gắn nhãn 'budget_alternative' sai nghĩa."""
+        df = pd.DataFrame([
+            {
+                "laptop_model_id": 1,
+                "price": 10000000,
+                "ram_gb": 16,
+                "storage_gb": 512,
+                "laptop_weight": 1.3,
+                "office_battery_minutes_final": 480,
+                "gpu_name": "Intel Iris Xe",
+                "geekbench_cpu_single": 2200,
+                "geekbench_cpu_multi": 9000,
+                "has_geekbench_data": True,
+                "relevance_score": 0.95,
+                "final_relevance_score": 0.95,
+            },
+            {
+                "laptop_model_id": 2,
+                "price": 15000000,
+                "ram_gb": 16,
+                "storage_gb": 512,
+                "laptop_weight": 1.4,
+                "office_battery_minutes_final": 420,
+                "gpu_name": "Intel Iris Xe",
+                "geekbench_cpu_single": 1800,
+                "geekbench_cpu_multi": 7000,
+                "has_geekbench_data": True,
+                "relevance_score": 0.90,
+                "final_relevance_score": 0.90,
+            },
+            {
+                "laptop_model_id": 3,
+                "price": 20000000,
+                "ram_gb": 16,
+                "storage_gb": 512,
+                "laptop_weight": 1.5,
+                "office_battery_minutes_final": 400,
+                "gpu_name": "Intel Iris Xe",
+                "geekbench_cpu_single": 2400,
+                "geekbench_cpu_multi": 10000,
+                "has_geekbench_data": True,
+                "relevance_score": 0.85,
+                "final_relevance_score": 0.85,
+            },
+        ])
+        res = solve_top3(df, RequirementSet())
+        self.assertTrue(res["is_feasible"])
+        self.assertFalse(any(r["type"] == "budget_alternative" for r in res["recommendations"]))
+
     def test_03_no_duplicates_among_ranks(self):
         """4. Không trùng lặp laptop giữa các rank."""
         req = RequirementSet(
@@ -287,6 +351,36 @@ class TestSolveTop3(unittest.TestCase):
         self.assertIn("price", violated_fields)
         self.assertNotIn("weight_kg", violated_fields)
 
+
+class TestRequirementMergeSemantics(unittest.TestCase):
+    """Kiểm tra chuyển nhu cầu mới không bị giữ tag/GPU cũ từ session."""
+
+    def test_office_query_replaces_old_gaming_context(self):
+        from app.recommendation.pipeline import _merge_requirements
+
+        old = {
+            "constraints": [
+                {"field": "gpu_discrete", "operator": "=", "value": True, "type": "hard"},
+                {"field": "gpu_keyword", "operator": "=", "value": "RTX 4060", "type": "hard"},
+                {"field": "price", "operator": "<=", "value": 25000000, "type": "hard"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_gaming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 15000000, "type": "soft"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_office_friendly"],
+        }
+
+        merged = _merge_requirements(old, new)
+        fields = {c["field"] for c in merged["constraints"]}
+
+        self.assertEqual(merged["required_tags"], ["is_office_friendly"])
+        self.assertNotIn("gpu_discrete", fields)
+        self.assertNotIn("gpu_keyword", fields)
 
 class TestPipelineTop3Integration(unittest.TestCase):
     """
