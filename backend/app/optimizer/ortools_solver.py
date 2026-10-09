@@ -820,14 +820,13 @@ def solve_top3(
         "soft_violations": soft_v_1,
     })
 
-    # --------------------------------------------------------------------------
-    # Rank 2: budget_alternative (utility >= 90% u1, Minimize price)
-    # --------------------------------------------------------------------------
-        # --------------------------------------------------------------------------
-    # Rank 2: budget_alternative
-    # Ưu tiên máy rẻ nhất có utility >= 90% Top 1.
-    # Nếu không có -> fallback máy rẻ nhất còn lại vẫn thỏa hard constraints.
-    # --------------------------------------------------------------------------
+    # Giá Top 1 dùng để đảm bảo "budget_alternative" thực sự rẻ hơn.
+    top1_price = (
+        int(float(row_1[price_col]))
+        if price_col and pd.notna(row_1.get(price_col))
+        else None
+    )
+
     # --------------------------------------------------------------------------
     # Rank 2: budget_alternative
     # Ưu tiên: utility >= 90% Top 1, sau đó minimize price.
@@ -855,7 +854,7 @@ def solve_top3(
             min_u2 = int(np.floor(0.90 * u1_val))
             model_2.add(utility_2 >= min_u2)
 
-        if price_col:
+        if price_col and top1_price is not None:
             price_vals_2 = [
                 int(float(candidates.loc[i, price_col]))
                 if pd.notna(candidates.loc[i, price_col])
@@ -868,8 +867,13 @@ def solve_top3(
                 for idx, i in enumerate(allowed_2)
             )
 
+            # "Tiết kiệm hơn" phải có giá thấp hơn Top 1, không chỉ là
+            # chiếc rẻ nhất trong số các máy còn lại.
+            model_2.add(total_price_2 < top1_price)
             model_2.minimize(total_price_2)
         else:
+            # Không có dữ liệu giá đáng tin cậy -> không thể gắn nhãn budget
+            # theo nghĩa "rẻ hơn", vì vậy chỉ tối ưu utility ở bước thử nghiệm.
             model_2.maximize(utility_2)
 
         solver_2_main: Any = cp_model.CpSolver()
@@ -896,7 +900,7 @@ def solve_top3(
                 )
             )
 
-            if price_col:
+            if price_col and top1_price is not None:
                 price_vals_2_fb = [
                     int(float(candidates.loc[i, price_col]))
                     if pd.notna(candidates.loc[i, price_col])
@@ -909,6 +913,9 @@ def solve_top3(
                     for idx, i in enumerate(allowed_2)
                 )
 
+                # Fallback chỉ bỏ ngưỡng utility 90%, KHÔNG bỏ ý nghĩa
+                # "budget": máy vẫn phải rẻ hơn Top 1.
+                model_2_fb.add(total_price_2_fb < top1_price)
                 model_2_fb.minimize(total_price_2_fb)
             else:
                 model_2_fb.maximize(utility_2_fb)
@@ -930,6 +937,8 @@ def solve_top3(
             chosen_idx_2 is not None
             and final_solver_2 is not None
             and final_utility_2 is not None
+            and price_col is not None
+            and top1_price is not None
         ):
             chosen_indices.add(chosen_idx_2)
 
