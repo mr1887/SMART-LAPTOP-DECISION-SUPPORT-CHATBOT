@@ -33,6 +33,32 @@ def _matches_gpu_keyword(gpu_name: Any, keyword: Optional[str]) -> bool:
     return all(tok in gpu_clean for tok in kw_tokens)
 
 
+def _coerce_bool_series(series: pd.Series) -> pd.Series:
+    """Chuẩn hóa cột tag boolean an toàn.
+
+    Tránh lỗi pandas astype(bool): chuỗi "False" cũng bị coi là True.
+    Hỗ trợ bool, 0/1 và các chuỗi true/false phổ biến.
+    """
+    true_values = {"true", "1", "yes", "y", "t", "có", "co"}
+    false_values = {"false", "0", "no", "n", "f", "không", "khong", "", "none", "nan"}
+
+    def _to_bool(v: Any) -> bool:
+        if pd.isna(v):
+            return False
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        s = str(v).strip().lower()
+        if s in true_values:
+            return True
+        if s in false_values:
+            return False
+        return False
+
+    return series.map(_to_bool)
+
+
 def _find_column(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
     """Tìm cột đầu tiên tồn tại trong DataFrame từ danh sách các tên cột tiềm năng."""
     for col in candidates:
@@ -215,13 +241,23 @@ def retrieve_candidates(
 
     valid_tag_cols = [tag for tag in required_tags if tag in filtered_df.columns]
     if valid_tag_cols:
-        tag_mask = pd.Series(True, index=filtered_df.index)
+        tag_mask = pd.Series(True, index=filtered_df.index, dtype=bool)
         for tag in valid_tag_cols:
-            tag_values = filtered_df[tag].fillna(False)
-            tag_mask &= tag_values.astype(bool)
+            tag_mask &= _coerce_bool_series(filtered_df[tag])
 
-        tagged_df = filtered_df[tag_mask]
-        if not tagged_df.empty:
-            filtered_df = cast(pd.DataFrame, tagged_df)
+        tagged_df = cast(pd.DataFrame, filtered_df[tag_mask])
+
+        print(
+            "[CandidateRetriever Tags]",
+            "required =", required_tags,
+            "valid_columns =", valid_tag_cols,
+            "before =", len(filtered_df),
+            "after =", len(tagged_df),
+            flush=True,
+        )
+
+        # Required tags là yêu cầu use-case rõ ràng. Không silently bỏ filter
+        # khi không có match, vì làm vậy khiến query văn phòng lại trả gaming.
+        filtered_df = tagged_df
 
     return filtered_df
