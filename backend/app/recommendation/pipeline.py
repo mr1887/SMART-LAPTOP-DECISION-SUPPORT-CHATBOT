@@ -237,10 +237,24 @@ def recommend(
     candidates_scored["final_relevance_score"] = final_scores
 
     # 7. OR-Tools Optimization (Top-3 CP-SAT Solver)
+    print(
+        ">>> PIPELINE BEFORE TOP3:",
+        "candidates =", len(candidates_scored),
+        "requirements =", validated_req.model_dump(),
+        flush=True,
+    )
+
     opt_result = solve_top3(candidates_scored, validated_req)
 
     # 8. Format Structured Result
     recommendations = opt_result.get("recommendations", [])
+
+    print(
+        ">>> PIPELINE AFTER TOP3:",
+        "recommendations =", len(recommendations),
+        [(r.get("rank"), r.get("type"), r.get("laptop_id")) for r in recommendations],
+        flush=True,
+    )
     recommended_laptops: list[dict[str, Any]] = []
 
     id_col = _find_column(candidates_scored, ["laptop_model_id", "laptop_id"])
