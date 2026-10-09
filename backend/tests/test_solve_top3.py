@@ -382,6 +382,44 @@ class TestRequirementMergeSemantics(unittest.TestCase):
         self.assertNotIn("gpu_discrete", fields)
         self.assertNotIn("gpu_keyword", fields)
 
+class TestRuntimeTaggingSemantics(unittest.TestCase):
+    def test_gaming_machine_is_not_office_friendly(self):
+        from app.tagging.auto_tag import tag_laptops
+
+        df = pd.DataFrame([
+            {
+                "laptop_model_id": 1,
+                "is_gaming_laptop": "True",
+                "laptop_weight": 1.8,
+                "office_battery_minutes_final": 420,
+                "geekbench_cpu_multi": 9000,
+            },
+            {
+                "laptop_model_id": 2,
+                "is_gaming_laptop": "False",
+                "laptop_weight": 1.4,
+                "office_battery_minutes_final": 480,
+                "geekbench_cpu_multi": 7000,
+            },
+        ])
+        tagged = tag_laptops(df)
+        self.assertFalse(bool(tagged.loc[0, "is_office_friendly"]))
+        self.assertTrue(bool(tagged.loc[1, "is_office_friendly"]))
+
+    def test_string_false_gaming_flag_is_false(self):
+        from app.tagging.auto_tag import tag_laptops
+        df = pd.DataFrame([
+            {
+                "is_gaming_laptop": "False",
+                "laptop_weight": 1.3,
+                "office_battery_minutes_final": 420,
+                "geekbench_cpu_multi": 7000,
+            }
+        ])
+        tagged = tag_laptops(df)
+        self.assertFalse(bool(tagged.loc[0, "is_gaming_friendly"]))
+
+
 class TestDeterministicNLUAndTagFiltering(unittest.TestCase):
     """Regression tests cho việc mọi query bị dồn về cùng candidate set."""
 
