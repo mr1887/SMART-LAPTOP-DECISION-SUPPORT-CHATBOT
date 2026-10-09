@@ -382,6 +382,72 @@ class TestRequirementMergeSemantics(unittest.TestCase):
         self.assertNotIn("gpu_discrete", fields)
         self.assertNotIn("gpu_keyword", fields)
 
+class TestFreshSearchAndUseCaseFiltering(unittest.TestCase):
+    """Regression tests cho lỗi nhiều truy vấn khác nhau cùng trả một nhóm gaming."""
+
+    def test_fresh_search_with_budget_and_new_tag_replaces_old_context(self):
+        from app.recommendation.pipeline import _is_fresh_search_request, _merge_requirements
+
+        old = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 25000000, "type": "soft"},
+                {"field": "gpu_discrete", "operator": "=", "value": True, "type": "hard"},
+                {"field": "gpu_keyword", "operator": "=", "value": "RTX 4060", "type": "hard"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_gaming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 15000000, "type": "soft"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_office_friendly"],
+        }
+
+        self.assertTrue(_is_fresh_search_request(new))
+        # Fresh search dùng raw new trực tiếp, không merge old. Test helper semantics.
+        self.assertEqual(new["required_tags"], ["is_office_friendly"])
+        fields = {c["field"] for c in new["constraints"]}
+        self.assertNotIn("gpu_keyword", fields)
+        self.assertNotIn("gpu_discrete", fields)
+
+    def test_candidate_retriever_respects_required_use_case_tags(self):
+        from app.retrieval.candidate_retriever import retrieve_candidates
+
+        df = pd.DataFrame([
+            {
+                "laptop_model_id": 1,
+                "price": 22000000,
+                "is_gaming_friendly": True,
+                "is_office_friendly": False,
+                "is_programming_friendly": False,
+            },
+            {
+                "laptop_model_id": 2,
+                "price": 14000000,
+                "is_gaming_friendly": False,
+                "is_office_friendly": True,
+                "is_programming_friendly": True,
+            },
+            {
+                "laptop_model_id": 3,
+                "price": 18000000,
+                "is_gaming_friendly": False,
+                "is_office_friendly": False,
+                "is_programming_friendly": True,
+            },
+        ])
+
+        office_req = RequirementSet(required_tags=["is_office_friendly"])
+        office = retrieve_candidates(df, office_req)
+        self.assertEqual(office["laptop_model_id"].tolist(), [2])
+
+        programming_req = RequirementSet(required_tags=["is_programming_friendly"])
+        programming = retrieve_candidates(df, programming_req)
+        self.assertEqual(set(programming["laptop_model_id"].tolist()), {2, 3})
+
+
 class TestPipelineTop3Integration(unittest.TestCase):
     """
     Kiểm thử tích hợp Top-3 Recommendation vào Pipeline (recommend() trong pipeline.py).
