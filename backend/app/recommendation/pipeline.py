@@ -280,7 +280,15 @@ def recommend(
 
     for rec in recommendations:
         rec_id = rec.get("laptop_id")
-        if rec_id is not None:
+        candidate_index = rec.get("candidate_index")
+
+        laptop_detail = None
+
+        # Ưu tiên đúng row mà solver đã chọn. Điều này tránh lấy nhầm biến thể
+        # khi nhiều dòng có cùng laptop_model_id nhưng giá/cấu hình khác nhau.
+        if candidate_index is not None and candidate_index in candidates_scored.index:
+            laptop_detail = candidates_scored.loc[candidate_index].to_dict()
+        elif rec_id is not None:
             if id_col and id_col in candidates_scored.columns:
                 matched_rows = candidates_scored[candidates_scored[id_col] == rec_id]
             else:
@@ -288,7 +296,13 @@ def recommend(
 
             if not matched_rows.empty:
                 laptop_detail = matched_rows.iloc[0].to_dict()
-                recommended_laptops.append(laptop_detail)
+
+        if laptop_detail is not None:
+            laptop_detail["rank"] = rec.get("rank")
+            laptop_detail["type"] = rec.get("type")
+            laptop_detail["utility_score"] = rec.get("utility_score")
+            laptop_detail["performance_score"] = rec.get("performance_score")
+            recommended_laptops.append(laptop_detail)
 
     recommended_laptop = recommended_laptops[0] if recommended_laptops else None
 
