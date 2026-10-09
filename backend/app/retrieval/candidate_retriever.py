@@ -201,4 +201,27 @@ def retrieve_candidates(
             mask = gpu_series.apply(lambda g: _matches_gpu_keyword(g, kw_str))
             filtered_df = cast(pd.DataFrame, filtered_df[mask])
 
+    # Required tags là nhu cầu sử dụng chính (gaming/programming/graphic/office).
+    # Nếu dataset có cột tag tương ứng và tồn tại ít nhất một ứng viên khớp,
+    # chỉ giữ các máy khớp TẤT CẢ required_tags. Nếu không có cột/tag hợp lệ
+    # hoặc không có máy nào khớp, giữ nguyên tập ứng viên để tránh lọc rỗng giả.
+    required_tags: list[str] = []
+    if isinstance(requirements, RequirementSet):
+        required_tags = list(requirements.required_tags)
+    elif isinstance(requirements, dict):
+        raw_tags = requirements.get("required_tags", [])
+        if isinstance(raw_tags, list):
+            required_tags = [str(t) for t in raw_tags if t]
+
+    valid_tag_cols = [tag for tag in required_tags if tag in filtered_df.columns]
+    if valid_tag_cols:
+        tag_mask = pd.Series(True, index=filtered_df.index)
+        for tag in valid_tag_cols:
+            tag_values = filtered_df[tag].fillna(False)
+            tag_mask &= tag_values.astype(bool)
+
+        tagged_df = filtered_df[tag_mask]
+        if not tagged_df.empty:
+            filtered_df = cast(pd.DataFrame, tagged_df)
+
     return filtered_df
