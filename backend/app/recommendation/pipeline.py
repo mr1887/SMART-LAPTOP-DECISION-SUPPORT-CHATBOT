@@ -340,6 +340,15 @@ def recommend(
             laptop_detail["type"] = rec.get("type")
             laptop_detail["utility_score"] = rec.get("utility_score")
             laptop_detail["performance_score"] = rec.get("performance_score")
+
+            # Giá canonical phải là đúng giá mà solver đã dùng để tối ưu.
+            # Dataset có thể đồng thời chứa price / price_vnd với giá trị không đồng bộ.
+            solver_price = rec.get("price")
+            if solver_price is not None:
+                laptop_detail["solver_price"] = solver_price
+                laptop_detail["price"] = solver_price
+                laptop_detail["price_vnd"] = solver_price
+
             recommended_laptops.append(laptop_detail)
 
     recommended_laptop = recommended_laptops[0] if recommended_laptops else None
