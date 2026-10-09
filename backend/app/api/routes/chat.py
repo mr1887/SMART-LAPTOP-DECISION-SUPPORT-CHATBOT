@@ -451,32 +451,49 @@ def chat(req: ChatRequest):
         except Exception:
             pass
 
-    # Xây dựng danh sách recommended_laptops với rich details cho từng rank
+    # Xây dựng recommended_laptops.
+    # Ưu tiên dữ liệu chính xác từ pipeline vì pipeline biết đúng row mà solver đã chọn.
+    # Chỉ lookup theo laptop_id khi pipeline không trả được row tương ứng.
     recommended_laptops = []
-    if recommendations:
+
+    if raw_recommended_laptops:
+        for raw_l in raw_recommended_laptops:
+            detail = _sanitize_for_json(raw_l.copy())
+
+            rid = detail.get("laptop_model_id", detail.get("laptop_id"))
+            rec = next(
+                (
+                    r for r in recommendations
+                    if str(r.get("laptop_id")) == str(rid)
+                ),
+                None,
+            )
+
+            if rec:
+                detail["rank"] = rec.get("rank")
+                detail["type"] = rec.get("type")
+                detail["utility_score"] = rec.get("utility_score")
+                detail["performance_score"] = rec.get("performance_score")
+
+            recommended_laptops.append(detail)
+
+    elif recommendations:
         for rec in recommendations:
             rid = rec.get("laptop_id")
-            if rid is not None:
-                detail = None
-                if df is not None:
-                    detail = _get_laptop_details(df, int(rid))
-                if detail is None:
-                    for raw_l in raw_recommended_laptops:
-                        if raw_l.get("laptop_model_id") == rid or raw_l.get("laptop_id") == rid:
-                            detail = raw_l
-                            break
-                if detail:
-                    detail = _sanitize_for_json(detail)
-                    detail["rank"] = rec.get("rank")
-                    detail["type"] = rec.get("type")
-                    detail["utility_score"] = rec.get("utility_score")
-                    detail["performance_score"] = rec.get("performance_score")
-                    recommended_laptops.append(detail)
-    elif raw_recommended_laptops:
-        recommended_laptops = [_sanitize_for_json(l) for l in raw_recommended_laptops]
+            if rid is None:
+                continue
 
-    # Backward compatibility: laptop_details cũ map tới recommended_laptop đầu tiên nếu có
-    if laptop_details is None and recommended_laptops:
+            detail = _get_laptop_details(df, int(rid)) if df is not None else None
+            if detail:
+                detail = _sanitize_for_json(detail)
+                detail["rank"] = rec.get("rank")
+                detail["type"] = rec.get("type")
+                detail["utility_score"] = rec.get("utility_score")
+                detail["performance_score"] = rec.get("performance_score")
+                recommended_laptops.append(detail)
+
+    # Backward compatibility: Top-1 detail phải cùng row với card #1.
+    if recommended_laptops:
         laptop_details = recommended_laptops[0]
 
     # Lưu lại session
