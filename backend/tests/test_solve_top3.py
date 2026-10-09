@@ -382,6 +382,119 @@ class TestRequirementMergeSemantics(unittest.TestCase):
         self.assertNotIn("gpu_discrete", fields)
         self.assertNotIn("gpu_keyword", fields)
 
+class TestContextActionClassification(unittest.TestCase):
+    """Phân biệt ADD / UPDATE / REPLACE trong hội thoại nhiều lượt."""
+
+    def test_add_requirement(self):
+        from app.nlp.nl2constraint import classify_context_action
+
+        old = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 20000000, "type": "soft"}
+            ],
+            "preferences": [],
+            "required_tags": ["is_programming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "weight_kg", "operator": "<=", "value": 1.5, "type": "hard"}
+            ],
+            "preferences": [],
+            "required_tags": [],
+        }
+
+        self.assertEqual(
+            classify_context_action(
+                "Ngoài ra tôi cần máy dưới 1.5kg",
+                parsed_requirements=new,
+                current_requirements=old,
+            ),
+            "ADD",
+        )
+
+    def test_update_existing_requirement(self):
+        from app.nlp.nl2constraint import classify_context_action
+
+        old = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 20000000, "type": "soft"}
+            ],
+            "preferences": [],
+            "required_tags": ["is_programming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 25000000, "type": "soft"}
+            ],
+            "preferences": [],
+            "required_tags": [],
+        }
+
+        self.assertEqual(
+            classify_context_action(
+                "Thôi nâng ngân sách lên 25 triệu",
+                parsed_requirements=new,
+                current_requirements=old,
+            ),
+            "UPDATE",
+        )
+
+    def test_replace_when_use_case_changes(self):
+        from app.nlp.nl2constraint import classify_context_action
+
+        old = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 25000000, "type": "soft"},
+                {"field": "gpu_keyword", "operator": "=", "value": "RTX 4060", "type": "hard"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_gaming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 15000000, "type": "soft"},
+            ],
+            "preferences": [],
+            "required_tags": ["is_office_friendly"],
+        }
+
+        self.assertEqual(
+            classify_context_action(
+                "Tư vấn laptop văn phòng giá rẻ tầm 15tr",
+                parsed_requirements=new,
+                current_requirements=old,
+            ),
+            "REPLACE",
+        )
+
+    def test_same_use_case_budget_change_is_update_not_replace(self):
+        from app.nlp.nl2constraint import classify_context_action
+
+        old = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 25000000, "type": "soft"}
+            ],
+            "preferences": [],
+            "required_tags": ["is_gaming_friendly"],
+        }
+        new = {
+            "constraints": [
+                {"field": "price", "operator": "<=", "value": 30000000, "type": "soft"}
+            ],
+            "preferences": [],
+            "required_tags": ["is_gaming_friendly"],
+        }
+
+        self.assertEqual(
+            classify_context_action(
+                "Vẫn gaming nhưng nâng ngân sách lên 30 triệu",
+                parsed_requirements=new,
+                current_requirements=old,
+            ),
+            "UPDATE",
+        )
+
+
 class TestFreshSearchAndUseCaseFiltering(unittest.TestCase):
     """Regression tests cho lỗi nhiều truy vấn khác nhau cùng trả một nhóm gaming."""
 
