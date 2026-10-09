@@ -382,6 +382,39 @@ class TestRequirementMergeSemantics(unittest.TestCase):
         self.assertNotIn("gpu_discrete", fields)
         self.assertNotIn("gpu_keyword", fields)
 
+class TestDeterministicNLUAndTagFiltering(unittest.TestCase):
+    """Regression tests cho việc mọi query bị dồn về cùng candidate set."""
+
+    def test_parse_preserves_regex_use_case_tag_when_gemini_disabled(self):
+        from app.nlp.nl2constraint import parse
+        out = parse("Tư vấn laptop văn phòng giá rẻ tầm 15tr", use_gemini=False)
+        self.assertIn("is_office_friendly", out["required_tags"])
+
+    def test_string_false_tag_is_not_truthy(self):
+        from app.retrieval.candidate_retriever import retrieve_candidates
+
+        df = pd.DataFrame([
+            {"laptop_model_id": 1, "is_office_friendly": "False"},
+            {"laptop_model_id": 2, "is_office_friendly": "True"},
+            {"laptop_model_id": 3, "is_office_friendly": "0"},
+            {"laptop_model_id": 4, "is_office_friendly": "1"},
+        ])
+        req = RequirementSet(required_tags=["is_office_friendly"])
+        out = retrieve_candidates(df, req)
+        self.assertEqual(set(out["laptop_model_id"].tolist()), {2, 4})
+
+    def test_no_tag_match_returns_empty_instead_of_all_candidates(self):
+        from app.retrieval.candidate_retriever import retrieve_candidates
+
+        df = pd.DataFrame([
+            {"laptop_model_id": 1, "is_office_friendly": False},
+            {"laptop_model_id": 2, "is_office_friendly": False},
+        ])
+        req = RequirementSet(required_tags=["is_office_friendly"])
+        out = retrieve_candidates(df, req)
+        self.assertTrue(out.empty)
+
+
 class TestContextActionClassification(unittest.TestCase):
     """Phân biệt ADD / UPDATE / REPLACE trong hội thoại nhiều lượt."""
 
