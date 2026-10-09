@@ -29,6 +29,7 @@ from app.optimizer.ortools_solver import (
 from app.retrieval.candidate_retriever import retrieve_candidates
 from app.scoring.predict import predict as predict_global_relevance
 from app.scoring.query_match import combine_scores, compute_query_match_score
+from app.tagging.auto_tag import tag_laptops
 
 _df_cache: Optional[pd.DataFrame] = None
 
@@ -56,7 +57,22 @@ def load_dataset() -> pd.DataFrame:
     csv_path = _find_dataset_path()
     if not csv_path.exists():
         raise FileNotFoundError(f"Không tìm thấy dataset tại {csv_path}.")
-    _df_cache = pd.read_csv(csv_path)
+    _df_cache = tag_laptops(pd.read_csv(csv_path))
+    print(
+        "[Dataset] loaded =", csv_path,
+        "rows =", len(_df_cache),
+        "use_case_tags =",
+        {
+            tag: int(_df_cache[tag].sum()) if tag in _df_cache.columns else None
+            for tag in (
+                "is_gaming_friendly",
+                "is_office_friendly",
+                "is_programming_friendly",
+                "is_graphic_friendly",
+            )
+        },
+        flush=True,
+    )
     return _df_cache
 
 
@@ -196,7 +212,16 @@ def recommend(
     validated_req = validate_requirement_set(merged_raw)
 
     # 3. Retrieve Candidates (Lọc an toàn các ràng buộc cứng)
-    source_df = df if df is not None else load_dataset()
+    source_df = tag_laptops(df) if df is not None else load_dataset()
+
+    print(
+        ">>> NLU/CONTEXT:",
+        "action =", context_action,
+        "raw =", raw_nlu,
+        "validated =", validated_req.model_dump(),
+        flush=True,
+    )
+
     candidates = retrieve_candidates(source_df, validated_req)
 
     # Nếu không còn ứng viên nào thỏa mãn các ràng buộc cứng ban đầu -> Fallback Nearest Alternative
