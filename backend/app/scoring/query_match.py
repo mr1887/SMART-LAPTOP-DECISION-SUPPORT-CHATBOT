@@ -165,7 +165,17 @@ def compute_query_match_score(
     if required_tags:
         matching_tag_cols = [tag for tag in required_tags if tag in df.columns]
         if matching_tag_cols:
-            tag_matches = df[matching_tag_cols].fillna(False).astype(int).sum(axis=1)
+            def _tag_bool(v: Any) -> bool:
+                if pd.isna(v):
+                    return False
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, (int, float)):
+                    return bool(v)
+                return str(v).strip().lower() in {"true", "1", "yes", "y", "t", "có", "co"}
+
+            tag_matrix = df[matching_tag_cols].apply(lambda col: col.map(_tag_bool).astype(int))
+            tag_matches = tag_matrix.sum(axis=1)
             t_score = tag_matches / len(required_tags)
             scores.append(pd.Series(t_score, index=df.index))
             weights.append(1.2)
