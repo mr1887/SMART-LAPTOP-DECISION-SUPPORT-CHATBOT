@@ -1125,6 +1125,20 @@ def solve_top3(
                 "soft_violations": soft_v_3,
             })
 
+    # Semantic safety guard: "budget_alternative" must truly be cheaper than Top 1.
+    # This is defensive validation in addition to the CP-SAT price constraint.
+    if recommendations:
+        top1_price_check = recommendations[0].get("price")
+        for rec in recommendations[1:]:
+            if rec.get("type") == "budget_alternative":
+                rec_price = rec.get("price")
+                if (
+                    top1_price_check is None
+                    or rec_price is None
+                    or float(rec_price) >= float(top1_price_check)
+                ):
+                    rec["type"] = "balanced_alternative"
+
     overall_status = "OPTIMAL" if status_1 == cp_model.OPTIMAL else "FEASIBLE"
     top1 = recommendations[0] if recommendations else None
 
