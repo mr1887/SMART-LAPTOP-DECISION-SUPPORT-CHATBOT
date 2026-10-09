@@ -438,6 +438,11 @@ document.addEventListener("DOMContentLoaded", () => {
         badgeClass = "badge-budget";
         cardClass = "budget-alt";
         break;
+      case "balanced_alternative":
+        label = "Phương án thay thế";
+        badgeClass = "badge-budget";
+        cardClass = "budget-alt";
+        break;
       case "performance_alternative":
         label = "Hiệu năng tốt";
         badgeClass = "badge-perf";
