@@ -121,6 +121,27 @@ def _merge_requirements(
     }
 
 
+def _is_fresh_search_request(parsed: Union[dict[str, Any], RequirementSet]) -> bool:
+    """Một truy vấn mới đủ đầy đủ (có nhu cầu + ngân sách) nên thay context cũ.
+
+    Mục tiêu: tránh trường hợp user chuyển từ "gaming RTX 4060 25tr" sang
+    "văn phòng 15tr" nhưng session vẫn giữ GPU/tag cũ. Các follow-up ngắn
+    như "rẻ hơn", "nhẹ hơn" vẫn tiếp tục merge với context hiện tại.
+    """
+    data = parsed.model_dump() if isinstance(parsed, RequirementSet) else (parsed or {})
+    tags = data.get("required_tags", []) or []
+    constraints = data.get("constraints", []) or []
+
+    has_price = False
+    for c in constraints:
+        field = c.get("field") if isinstance(c, dict) else getattr(c, "field", None)
+        if field == "price":
+            has_price = True
+            break
+
+    return bool(tags) and has_price
+
+
 def recommend(
     query: str,
     current_constraints: Optional[Union[dict[str, Any], RequirementSet]] = None,
@@ -151,7 +172,10 @@ def recommend(
     """
     # 1. Parse NLU
     raw_nlu = parse_nlu(query, use_gemini=use_gemini_nlu)
-    if current_constraints:
+
+    # Một yêu cầu mới đã nêu cả nhu cầu chính và ngân sách được xem là
+    # "fresh search": không mang theo GPU/tag/constraint cũ từ session.
+    if current_constraints and not _is_fresh_search_request(raw_nlu):
         merged_raw = _merge_requirements(current_constraints, raw_nlu)
     else:
         merged_raw = raw_nlu
