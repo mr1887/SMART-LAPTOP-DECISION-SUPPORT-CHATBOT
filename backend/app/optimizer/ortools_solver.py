@@ -811,6 +811,7 @@ def solve_top3(
     recommendations.append({
         "rank": 1,
         "type": "best_match",
+        "candidate_index": chosen_idx_1,
         "laptop_id": row_1.get("laptop_model_id", row_1.get("laptop_id", chosen_idx_1)),
         "relevance_score": relevance_1,
         "utility_score": round(u1_val / score_scale, 4),
@@ -959,6 +960,7 @@ def solve_top3(
             recommendations.append({
                 "rank": 2,
                 "type": "budget_alternative",
+                "candidate_index": chosen_idx_2,
                 "laptop_id": row_2.get(
                     "laptop_model_id",
                     row_2.get("laptop_id", chosen_idx_2),
@@ -1099,6 +1101,7 @@ def solve_top3(
             recommendations.append({
                 "rank": 3,
                 "type": "performance_alternative",
+                "candidate_index": chosen_idx_3,
                 "laptop_id": row_3.get(
                     "laptop_model_id",
                     row_3.get("laptop_id", chosen_idx_3),
