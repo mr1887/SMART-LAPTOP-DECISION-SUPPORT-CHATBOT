@@ -90,10 +90,29 @@ def _merge_requirements(
         if field:
             pref_map[field] = p
 
-    # Gộp required tags
-    base_tags = set(base_dict.get("required_tags", []))
-    new_tags = set(new_dict.get("required_tags", []))
-    merged_tags = list(base_tags | new_tags)
+    # Required tags biểu diễn "nhu cầu chính". Khi lượt mới nêu rõ một nhu cầu
+    # mới (ví dụ gaming -> văn phòng), thay thế tag cũ thay vì union vô hạn.
+    base_tags = list(base_dict.get("required_tags", []))
+    new_tags = list(new_dict.get("required_tags", []))
+    merged_tags = new_tags if new_tags else base_tags
+
+    # Nếu người dùng chuyển sang nhu cầu văn phòng/học tập thuần túy mà lượt mới
+    # không nhắc GPU cụ thể, loại bỏ ràng buộc GPU cũ để tránh "kẹt" RTX/gaming
+    # từ truy vấn trước.
+    new_constraint_fields = {
+        c.get("field") if isinstance(c, dict) else getattr(c, "field", None)
+        for c in new_dict.get("constraints", [])
+    }
+    switched_to_office = (
+        "is_office_friendly" in new_tags
+        and "is_gaming_friendly" not in new_tags
+        and set(new_tags) != set(base_tags)
+    )
+    if switched_to_office:
+        if "gpu_keyword" not in new_constraint_fields:
+            constraint_map.pop("gpu_keyword", None)
+        if "gpu_discrete" not in new_constraint_fields:
+            constraint_map.pop("gpu_discrete", None)
 
     return {
         "constraints": list(constraint_map.values()),
