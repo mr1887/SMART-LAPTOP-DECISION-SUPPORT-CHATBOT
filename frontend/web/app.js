@@ -595,7 +595,13 @@ document.addEventListener("DOMContentLoaded", () => {
     card.appendChild(nameEl);
 
     // Price
-    const rawPrice = laptop.price_vnd ?? laptop.price ?? recMeta.price;
+    // Ưu tiên đúng giá mà solver đã dùng để tối ưu/rank.
+    // Không ưu tiên price_vnd thô vì dataset có thể có nhiều cột giá không đồng bộ.
+    const rawPrice =
+      laptop.solver_price ??
+      recMeta.price ??
+      laptop.price ??
+      laptop.price_vnd;
     if (rawPrice !== undefined && rawPrice !== null && !isNaN(rawPrice) && Number(rawPrice) > 0) {
       const priceEl = document.createElement("div");
       priceEl.className = "card-price";
