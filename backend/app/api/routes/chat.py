@@ -475,6 +475,12 @@ def chat(req: ChatRequest):
                 detail["utility_score"] = rec.get("utility_score")
                 detail["performance_score"] = rec.get("performance_score")
 
+                solver_price = rec.get("price")
+                if solver_price is not None:
+                    detail["solver_price"] = solver_price
+                    detail["price"] = solver_price
+                    detail["price_vnd"] = solver_price
+
             recommended_laptops.append(detail)
 
     elif recommendations:
