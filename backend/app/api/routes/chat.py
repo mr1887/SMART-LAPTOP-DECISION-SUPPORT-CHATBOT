@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.nlp import nl2constraint
 from app.session import session_manager
+from app.tagging.auto_tag import tag_laptops
 
 # Chế độ sinh lời giải thích tư vấn ("template" | "gemini").
 # Default: "template" (dùng verified laptop_details và solver result, không gọi Gemini lần 2 để đo API usage).
@@ -70,7 +71,7 @@ def _load_scored_df() -> pd.DataFrame:
             f"Không tìm thấy dataset tại {csv_path}. "
             "Vui lòng kiểm tra thư mục data/processed/laptop_dataset_scored.csv."
         )
-    _df_cache = pd.read_csv(csv_path)
+    _df_cache = tag_laptops(pd.read_csv(csv_path))
     return _df_cache
 
 
