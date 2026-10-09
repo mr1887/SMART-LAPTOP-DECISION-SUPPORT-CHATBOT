@@ -1115,18 +1115,27 @@ def solve_top3(
 
     overall_status = "OPTIMAL" if status_1 == cp_model.OPTIMAL else "FEASIBLE"
     top1 = recommendations[0] if recommendations else None
-    print("TOP3 DEBUG:", len(recommendations), recommendations)
-    print("TOP3 DEBUG:", len(candidates), len(recommendations), [(r["rank"], r["type"], r["laptop_id"]) for r in recommendations])
-    
+
+    # Runtime diagnostics: giúp xác định lỗi nằm ở solver hay downstream/frontend.
+    print(
+        ">>> SOLVE_TOP3 RESULT:",
+        "candidates =", len(candidates),
+        "recommendations =", len(recommendations),
+        [(r.get("rank"), r.get("type"), r.get("laptop_id")) for r in recommendations],
+        flush=True,
+    )
+
     return {
         "status": overall_status,
-        "is_feasible": True,
-        "laptop_id": top1["laptop_id"] if top1 else None,
-        "relevance_score": top1["relevance_score"] if top1 else None,
+        "is_feasible": bool(top1),
+        "laptop_id": top1.get("laptop_id") if top1 else None,
+        "relevance_score": top1.get("relevance_score") if top1 else None,
         "hard_violations": [],
-        "has_soft_violation": top1["has_soft_violation"] if top1 else False,
-        "soft_violations": top1["soft_violations"] if top1 else [],
+        "has_soft_violation": bool(top1.get("has_soft_violation", False)) if top1 else False,
+        "soft_violations": top1.get("soft_violations", []) if top1 else [],
         "recommendations": recommendations,
+        "recommendations_count": len(recommendations),
+        "candidates_count": len(candidates),
     }
 
 
