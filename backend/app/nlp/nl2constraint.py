@@ -587,29 +587,51 @@ def convert_legacy_regex_to_requirement_set(legacy_data: dict, text: str = "") -
 
 
 def parse(text: str, use_gemini: bool = True) -> dict:
-    """Hàm chính: nhận câu tiếng Việt → dict ràng buộc theo schema mới (RequirementSet).
-    Ưu tiên dùng Google Gemini (nếu có API Key), tự động fallback về Regex nếu lỗi hoặc output invalid.
+    """Nhận câu tiếng Việt -> RequirementSet.
 
-    Args:
-        text: Câu hỏi/yêu cầu của người dùng.
-        use_gemini: Cho phép dùng Gemini hay không (mặc định True).
-
-    Returns:
-        dict định dạng RequirementSet (constraints, preferences, required_tags).
+    Gemini được dùng cho semantic extraction, nhưng các tín hiệu deterministic
+    rõ ràng (giá, GPU, RAM/SSD, tag nhu cầu) từ regex luôn được dùng để bổ sung.
+    Điều này tránh trường hợp Gemini bỏ sót "văn phòng", "lập trình", "gaming"
+    khiến nhiều truy vấn khác nhau cùng rơi vào một candidate set.
     """
+    legacy_res = parse_regex(text)
+    regex_req = convert_legacy_regex_to_requirement_set(legacy_res, text=text)
+
     if use_gemini:
         try:
             from app.ai.gemini_service import extract_constraints_gemini
             from app.nlp.validator import validate_requirement_set
+
             gemini_result = extract_constraints_gemini(text)
             if gemini_result and isinstance(gemini_result, dict):
-                validated = validate_requirement_set(gemini_result)
-                return validated.model_dump()
+                validated = validate_requirement_set(gemini_result).model_dump()
+
+                # 1) Required tags: deterministic keyword tags rất đáng tin cậy.
+                # Nếu regex nhận ra "văn phòng", "lập trình", "gaming", "đồ họa"
+                # thì bắt buộc giữ tag đó, kể cả Gemini bỏ sót.
+                merged_tags = list(dict.fromkeys(
+                    list(validated.get("required_tags", []) or [])
+                    + list(regex_req.get("required_tags", []) or [])
+                ))
+                validated["required_tags"] = merged_tags
+
+                # 2) Constraints: Gemini giữ ưu tiên; regex chỉ bổ sung field bị thiếu.
+                gemini_fields = {
+                    c.get("field")
+                    for c in validated.get("constraints", [])
+                    if isinstance(c, dict) and c.get("field")
+                }
+                merged_constraints = list(validated.get("constraints", []) or [])
+                for c in regex_req.get("constraints", []) or []:
+                    if isinstance(c, dict) and c.get("field") not in gemini_fields:
+                        merged_constraints.append(c)
+
+                validated["constraints"] = merged_constraints
+                return validate_requirement_set(validated).model_dump()
         except Exception:
             pass
 
-    legacy_res = parse_regex(text)
-    return convert_legacy_regex_to_requirement_set(legacy_res, text=text)
+    return regex_req
 
 
 
