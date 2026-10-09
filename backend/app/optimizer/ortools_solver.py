@@ -823,102 +823,301 @@ def solve_top3(
     # --------------------------------------------------------------------------
     # Rank 2: budget_alternative (utility >= 90% u1, Minimize price)
     # --------------------------------------------------------------------------
+        # --------------------------------------------------------------------------
+    # Rank 2: budget_alternative
+    # Ưu tiên máy rẻ nhất có utility >= 90% Top 1.
+    # Nếu không có -> fallback máy rẻ nhất còn lại vẫn thỏa hard constraints.
+    # --------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Rank 2: budget_alternative
+    # Ưu tiên: utility >= 90% Top 1, sau đó minimize price.
+    # Nếu không có máy đạt ngưỡng 90% -> fallback minimize price
+    # trên các máy còn lại vẫn thỏa hard constraints.
+    # --------------------------------------------------------------------------
     allowed_2 = [i for i in candidates.index if i not in chosen_indices]
+
     if allowed_2:
+        chosen_idx_2 = None
+        final_solver_2: Any = None
+        final_utility_2 = None
+        final_trackers_2: list[dict[str, Any]] = []
+
+        # ---------------- Attempt 1: giữ ngưỡng utility 90% ----------------
         model_2, x_2, utility_2, trackers_2 = _build_optimization_step_model(
-            candidates, allowed_2, constraints_list, score_col, score_scale
+            candidates,
+            allowed_2,
+            constraints_list,
+            score_col,
+            score_scale,
         )
-        min_u2 = int(np.floor(0.90 * u1_val))
-        model_2.Add(utility_2 >= min_u2)
+
+        if u1_val > 0:
+            min_u2 = int(np.floor(0.90 * u1_val))
+            model_2.add(utility_2 >= min_u2)
 
         if price_col:
             price_vals_2 = [
-                int(float(candidates.loc[i, price_col])) if pd.notna(candidates.loc[i, price_col]) else 0
+                int(float(candidates.loc[i, price_col]))
+                if pd.notna(candidates.loc[i, price_col])
+                else 0
                 for i in allowed_2
             ]
-            total_price_2 = sum(price_vals_2[idx] * x_2[i] for idx, i in enumerate(allowed_2))
-            model_2.Minimize(total_price_2)
+
+            total_price_2 = sum(
+                price_vals_2[idx] * x_2[i]
+                for idx, i in enumerate(allowed_2)
+            )
+
+            model_2.minimize(total_price_2)
         else:
-            model_2.Maximize(utility_2)
+            model_2.maximize(utility_2)
 
-        solver_2: Any = cp_model.CpSolver()
-        status_2 = solver_2.Solve(model_2)
+        solver_2_main: Any = cp_model.CpSolver()
+        status_2_main = solver_2_main.Solve(model_2)
 
-        if status_2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            chosen_idx_2 = None
+        if status_2_main in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             for i in allowed_2:
-                if solver_2.BooleanValue(x_2[i]):
+                if solver_2_main.BooleanValue(x_2[i]):
                     chosen_idx_2 = i
+                    final_solver_2 = solver_2_main
+                    final_utility_2 = utility_2
+                    final_trackers_2 = trackers_2
                     break
 
-            if chosen_idx_2 is not None:
-                chosen_indices.add(chosen_idx_2)
-                u2_val = int(solver_2.Value(utility_2))
-                row_2 = candidates.loc[chosen_idx_2]
-                soft_v_2 = _extract_soft_violations(row_2, trackers_2)
-                relevance_2 = float(row_2[score_col]) if (score_col and pd.notna(row_2.get(score_col))) else None
+        # ---------------- Attempt 2: fallback nếu 90% quá chặt ----------------
+        if chosen_idx_2 is None:
+            model_2_fb, x_2_fb, utility_2_fb, trackers_2_fb = (
+                _build_optimization_step_model(
+                    candidates,
+                    allowed_2,
+                    constraints_list,
+                    score_col,
+                    score_scale,
+                )
+            )
 
-                recommendations.append({
-                    "rank": 2,
-                    "type": "budget_alternative",
-                    "laptop_id": row_2.get("laptop_model_id", row_2.get("laptop_id", chosen_idx_2)),
-                    "relevance_score": relevance_2,
-                    "utility_score": round(u2_val / score_scale, 4),
-                    "price": float(row_2[price_col]) if price_col and pd.notna(row_2.get(price_col)) else None,
-                    "performance_score": float(perf_scores.loc[chosen_idx_2]) if chosen_idx_2 in perf_scores.index else 0.0,
-                    "has_soft_violation": len(soft_v_2) > 0,
-                    "soft_violations": soft_v_2,
-                })
+            if price_col:
+                price_vals_2_fb = [
+                    int(float(candidates.loc[i, price_col]))
+                    if pd.notna(candidates.loc[i, price_col])
+                    else 0
+                    for i in allowed_2
+                ]
+
+                total_price_2_fb = sum(
+                    price_vals_2_fb[idx] * x_2_fb[i]
+                    for idx, i in enumerate(allowed_2)
+                )
+
+                model_2_fb.minimize(total_price_2_fb)
+            else:
+                model_2_fb.maximize(utility_2_fb)
+
+            solver_2_fb: Any = cp_model.CpSolver()
+            status_2_fb = solver_2_fb.Solve(model_2_fb)
+
+            if status_2_fb in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                for i in allowed_2:
+                    if solver_2_fb.BooleanValue(x_2_fb[i]):
+                        chosen_idx_2 = i
+                        final_solver_2 = solver_2_fb
+                        final_utility_2 = utility_2_fb
+                        final_trackers_2 = trackers_2_fb
+                        break
+
+        # ---------------- Append Rank 2 ----------------
+        if (
+            chosen_idx_2 is not None
+            and final_solver_2 is not None
+            and final_utility_2 is not None
+        ):
+            chosen_indices.add(chosen_idx_2)
+
+            row_2 = candidates.loc[chosen_idx_2]
+            u2_val = int(final_solver_2.Value(final_utility_2))
+
+            soft_v_2 = _extract_soft_violations(
+                row_2,
+                final_trackers_2,
+            )
+
+            relevance_2 = (
+                float(row_2[score_col])
+                if score_col and pd.notna(row_2.get(score_col))
+                else None
+            )
+
+            recommendations.append({
+                "rank": 2,
+                "type": "budget_alternative",
+                "laptop_id": row_2.get(
+                    "laptop_model_id",
+                    row_2.get("laptop_id", chosen_idx_2),
+                ),
+                "relevance_score": relevance_2,
+                "utility_score": round(
+                    u2_val / score_scale,
+                    4,
+                ),
+                "price": (
+                    float(row_2[price_col])
+                    if price_col and pd.notna(row_2.get(price_col))
+                    else None
+                ),
+                "performance_score": (
+                    float(perf_scores.loc[chosen_idx_2])
+                    if chosen_idx_2 in perf_scores.index
+                    else 0.0
+                ),
+                "has_soft_violation": len(soft_v_2) > 0,
+                "soft_violations": soft_v_2,
+            })
+
 
     # --------------------------------------------------------------------------
-    # Rank 3: performance_alternative (utility >= 80% u1, Maximize performance_score)
+    # Rank 3: performance_alternative
+    # Ưu tiên: utility >= 80% Top 1, sau đó maximize performance_score.
+    # Nếu không có máy đạt ngưỡng 80% -> fallback maximize performance_score
+    # trên các máy còn lại vẫn thỏa hard constraints.
     # --------------------------------------------------------------------------
     allowed_3 = [i for i in candidates.index if i not in chosen_indices]
+
     if allowed_3:
+        chosen_idx_3 = None
+        final_solver_3: Any = None
+        final_utility_3 = None
+        final_trackers_3: list[dict[str, Any]] = []
+
+        # ---------------- Attempt 1: giữ ngưỡng utility 80% ----------------
         model_3, x_3, utility_3, trackers_3 = _build_optimization_step_model(
-            candidates, allowed_3, constraints_list, score_col, score_scale
+            candidates,
+            allowed_3,
+            constraints_list,
+            score_col,
+            score_scale,
         )
-        min_u3 = int(np.floor(0.80 * u1_val))
-        model_3.Add(utility_3 >= min_u3)
+
+        if u1_val > 0:
+            min_u3 = int(np.floor(0.80 * u1_val))
+            model_3.add(utility_3 >= min_u3)
 
         perf_vals_3 = [
-            int(float(perf_scores.loc[i]) * score_scale) if i in perf_scores.index else 0
+            int(float(perf_scores.loc[i]) * score_scale)
+            if i in perf_scores.index
+            else 0
             for i in allowed_3
         ]
-        total_perf_3 = sum(perf_vals_3[idx] * x_3[i] for idx, i in enumerate(allowed_3))
-        model_3.Maximize(total_perf_3)
 
-        solver_3: Any = cp_model.CpSolver()
-        status_3 = solver_3.Solve(model_3)
+        total_perf_3 = sum(
+            perf_vals_3[idx] * x_3[i]
+            for idx, i in enumerate(allowed_3)
+        )
 
-        if status_3 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            chosen_idx_3 = None
+        model_3.maximize(total_perf_3)
+
+        solver_3_main: Any = cp_model.CpSolver()
+        status_3_main = solver_3_main.Solve(model_3)
+
+        if status_3_main in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             for i in allowed_3:
-                if solver_3.BooleanValue(x_3[i]):
+                if solver_3_main.BooleanValue(x_3[i]):
                     chosen_idx_3 = i
+                    final_solver_3 = solver_3_main
+                    final_utility_3 = utility_3
+                    final_trackers_3 = trackers_3
                     break
 
-            if chosen_idx_3 is not None:
-                chosen_indices.add(chosen_idx_3)
-                u3_val = int(solver_3.Value(utility_3))
-                row_3 = candidates.loc[chosen_idx_3]
-                soft_v_3 = _extract_soft_violations(row_3, trackers_3)
-                relevance_3 = float(row_3[score_col]) if (score_col and pd.notna(row_3.get(score_col))) else None
+        # ---------------- Attempt 2: fallback nếu 80% quá chặt ----------------
+        if chosen_idx_3 is None:
+            model_3_fb, x_3_fb, utility_3_fb, trackers_3_fb = (
+                _build_optimization_step_model(
+                    candidates,
+                    allowed_3,
+                    constraints_list,
+                    score_col,
+                    score_scale,
+                )
+            )
 
-                recommendations.append({
-                    "rank": 3,
-                    "type": "performance_alternative",
-                    "laptop_id": row_3.get("laptop_model_id", row_3.get("laptop_id", chosen_idx_3)),
-                    "relevance_score": relevance_3,
-                    "utility_score": round(u3_val / score_scale, 4),
-                    "price": float(row_3[price_col]) if price_col and pd.notna(row_3.get(price_col)) else None,
-                    "performance_score": float(perf_scores.loc[chosen_idx_3]) if chosen_idx_3 in perf_scores.index else 0.0,
-                    "has_soft_violation": len(soft_v_3) > 0,
-                    "soft_violations": soft_v_3,
-                })
+            perf_vals_3_fb = [
+                int(float(perf_scores.loc[i]) * score_scale)
+                if i in perf_scores.index
+                else 0
+                for i in allowed_3
+            ]
+
+            total_perf_3_fb = sum(
+                perf_vals_3_fb[idx] * x_3_fb[i]
+                for idx, i in enumerate(allowed_3)
+            )
+
+            model_3_fb.maximize(total_perf_3_fb)
+
+            solver_3_fb: Any = cp_model.CpSolver()
+            status_3_fb = solver_3_fb.Solve(model_3_fb)
+
+            if status_3_fb in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                for i in allowed_3:
+                    if solver_3_fb.BooleanValue(x_3_fb[i]):
+                        chosen_idx_3 = i
+                        final_solver_3 = solver_3_fb
+                        final_utility_3 = utility_3_fb
+                        final_trackers_3 = trackers_3_fb
+                        break
+
+        # ---------------- Append Rank 3 ----------------
+        if (
+            chosen_idx_3 is not None
+            and final_solver_3 is not None
+            and final_utility_3 is not None
+        ):
+            chosen_indices.add(chosen_idx_3)
+
+            row_3 = candidates.loc[chosen_idx_3]
+            u3_val = int(final_solver_3.Value(final_utility_3))
+
+            soft_v_3 = _extract_soft_violations(
+                row_3,
+                final_trackers_3,
+            )
+
+            relevance_3 = (
+                float(row_3[score_col])
+                if score_col and pd.notna(row_3.get(score_col))
+                else None
+            )
+
+            recommendations.append({
+                "rank": 3,
+                "type": "performance_alternative",
+                "laptop_id": row_3.get(
+                    "laptop_model_id",
+                    row_3.get("laptop_id", chosen_idx_3),
+                ),
+                "relevance_score": relevance_3,
+                "utility_score": round(
+                    u3_val / score_scale,
+                    4,
+                ),
+                "price": (
+                    float(row_3[price_col])
+                    if price_col and pd.notna(row_3.get(price_col))
+                    else None
+                ),
+                "performance_score": (
+                    float(perf_scores.loc[chosen_idx_3])
+                    if chosen_idx_3 in perf_scores.index
+                    else 0.0
+                ),
+                "has_soft_violation": len(soft_v_3) > 0,
+                "soft_violations": soft_v_3,
+            })
 
     overall_status = "OPTIMAL" if status_1 == cp_model.OPTIMAL else "FEASIBLE"
     top1 = recommendations[0] if recommendations else None
+    print("TOP3 DEBUG:", len(recommendations), recommendations)
+    print("TOP3 DEBUG:", len(candidates), len(recommendations), [(r["rank"], r["type"], r["laptop_id"]) for r in recommendations])
+    
     return {
         "status": overall_status,
         "is_feasible": True,

@@ -5,6 +5,7 @@ Hữu ích khi debug hoặc khi frontend muốn gọi solver trực tiếp
 mà không qua NLP parsing.
 """
 
+from google.genai import _operations_converters
 from pathlib import Path
 
 import pandas as pd
@@ -12,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.nlp.nl2constraint import convert_legacy_regex_to_requirement_set
-from app.optimizer.ortools_solver import solve as solve_ortools
+from app.optimizer.ortools_solver import solve_top3
 
 router = APIRouter()
 
@@ -77,7 +78,32 @@ def solve_with_constraints(req: ConstraintRequest):
     try:
         df = _load_scored_df()
         req_set = convert_legacy_regex_to_requirement_set(constraints)
-        opt_res = solve_ortools(df, req_set)
+        opt_res = solve_top3(df, req_set)
+        recommendations = opt_res.get("recommendations", [])
+
+        recommended_laptops = []
+
+        for rec in recommendations:
+            laptop_id = rec.get("laptop_id")
+
+            if laptop_id is None:
+                continue
+
+            matches = df[df["laptop_model_id"] == laptop_id]
+
+            if matches.empty:
+                continue
+
+            row = matches.iloc[0].to_dict()
+
+            # Gắn metadata của recommendation vào laptop
+            row["rank"] = rec.get("rank")
+            row["type"] = rec.get("type")
+            row["utility_score"] = rec.get("utility_score")
+            row["performance_score"] = rec.get("performance_score")
+            row["relevance_score"] = rec.get("relevance_score")
+
+            recommended_laptops.append(row)
 
         has_soft_v = bool(opt_res.get("has_soft_violation", False))
         soft_vs = opt_res.get("soft_violations", [])
@@ -87,7 +113,7 @@ def solve_with_constraints(req: ConstraintRequest):
         result = {
             "laptop_id": opt_res.get("laptop_id"),
             "is_feasible": bool(opt_res.get("is_feasible")),
-            "is_relaxed": has_soft_v,
+            "is_relaxed": opt_res.get("status") == "RELAXED",
             "ai_score": opt_res.get("relevance_score"),
             "relevance_score": opt_res.get("relevance_score"),
             "violations": violations,
@@ -99,7 +125,14 @@ def solve_with_constraints(req: ConstraintRequest):
         
         # Import helper từ route chat để sinh câu trả lời đầy đủ & laptop_details
         from app.api.routes.chat import _get_laptop_details, _build_reply
-        laptop_details = _get_laptop_details(df, result.get("laptop_id"))
+
+        laptop_details = None
+
+        if result.get("laptop_id") is not None:
+            laptop_details = _get_laptop_details(
+        df,
+        int(result.get("laptop_id"))
+    )
         
         reply = None
         if result is not None:
@@ -121,8 +154,10 @@ def solve_with_constraints(req: ConstraintRequest):
             "constraints": constraints,
             "result": result,
             "laptop_details": laptop_details,
+            "recommendations": recommendations,
+            "recommended_laptops": recommended_laptops,
             "reply": reply,
-        }
+        }   
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
