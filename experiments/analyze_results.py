@@ -479,6 +479,11 @@ def analyze(
             ])
         )
         summary["rq1_technical_feasibility"]["multiturn_n"] = len(mt)
+        nlu_counts: Dict[str, int] = {}
+        for row in hybrid:
+            source = str(row.get("nlu_source") or "unknown")
+            nlu_counts[source] = nlu_counts.get(source, 0) + 1
+        summary["rq1_technical_feasibility"]["nlu_source_counts"] = nlu_counts
 
     main = [
         r for r in evaluated
@@ -489,11 +494,21 @@ def analyze(
         by_system.setdefault(str(r.get("system")), []).append(r)
 
     for system, group in by_system.items():
+        attempted_group = list(group)
+        if system == "llm_only":
+            completed_group = [r for r in group if str(r.get("status")) == "COMPLETED"]
+            api_failed_group = [r for r in group if str(r.get("status")) == "API_FAILED"]
+            parse_failed_group = [r for r in group if str(r.get("status")) == "PARSE_FAILED"]
+        else:
+            completed_group = list(group)
+            api_failed_group = []
+            parse_failed_group = []
+
         feasible_group = [
-            r for r in group if _b(r.get("expected_feasible"))
+            r for r in completed_group if _b(r.get("expected_feasible"))
         ]
         soft_group = []
-        for r in group:
+        for r in completed_group:
             gt = expected_by_id.get(str(r.get("query_id")), {})
             cons = _j(gt.get("expected_constraints_json"), [])
             if any(c.get("type", "hard") == "soft" for c in cons):
@@ -501,11 +516,16 @@ def analyze(
 
         lat = [
             float(r["total_latency_ms"])
-            for r in group
+            for r in attempted_group
+            if r.get("total_latency_ms") is not None
+        ]
+        completed_lat = [
+            float(r["total_latency_ms"])
+            for r in completed_group
             if r.get("total_latency_ms") is not None
         ]
         valid_rate = _safe_mean([
-            float(bool(r.get("product_valid"))) for r in group
+            float(bool(r.get("product_valid"))) for r in completed_group
         ])
         hard_rate = _safe_mean([
             float(bool(r.get("independent_hard_constraint_satisfied")))
@@ -517,7 +537,11 @@ def analyze(
         ])
 
         summary["rq2_decision_reliability"][system] = {
-            "comparison_n": len(group),
+            "comparison_n": len(attempted_group),
+            "completed_recommendation_n": len(completed_group),
+            "api_failure_n": len(api_failed_group),
+            "api_failure_rate": (round(len(api_failed_group) / len(attempted_group), 4) if attempted_group else None),
+            "parse_failure_n": len(parse_failed_group),
             "feasible_case_n": len(feasible_group),
             "product_validity_rate": valid_rate,
             "hallucination_rate": (
@@ -530,19 +554,22 @@ def analyze(
             "soft_constraint_violation_rate": soft_violation_rate,
         }
         summary["rq3_operational_feasibility"][system] = {
-            "n": len(group),
-            "average_latency_ms": _safe_mean(lat),
-            "median_latency_ms": _safe_median(lat),
+            "n": len(attempted_group),
+            "completed_n": len(completed_group),
+            "average_latency_ms_all_attempts": _safe_mean(lat),
+            "median_latency_ms_all_attempts": _safe_median(lat),
+            "average_latency_ms_completed": _safe_mean(completed_lat),
+            "median_latency_ms_completed": _safe_median(completed_lat),
             "average_llm_calls": _safe_mean([
-                float(r.get("llm_calls") or 0) for r in group
+                float(r.get("llm_calls") or 0) for r in attempted_group
             ]),
             "average_input_tokens": _safe_mean([
                 float(r["input_tokens"])
-                for r in group if r.get("input_tokens") is not None
+                for r in attempted_group if r.get("input_tokens") is not None
             ]),
             "average_output_tokens": _safe_mean([
                 float(r["output_tokens"])
-                for r in group if r.get("output_tokens") is not None
+                for r in attempted_group if r.get("output_tokens") is not None
             ]),
         }
 
