@@ -246,23 +246,49 @@ def _norm_preferences(items: Iterable[Dict[str, Any]]) -> set:
     }
 
 
+def _prf(predicted: set, expected: set) -> Tuple[float, float, float]:
+    if not predicted and not expected:
+        return 1.0, 1.0, 1.0
+    tp = len(predicted & expected)
+    precision = tp / len(predicted) if predicted else 0.0
+    recall = tp / len(expected) if expected else 1.0
+    f1 = (
+        2.0 * precision * recall / (precision + recall)
+        if precision + recall > 0
+        else 0.0
+    )
+    return precision, recall, f1
+
+
 def _requirement_eval(
     parsed: Dict[str, Any],
     expected: Dict[str, Any],
-) -> Tuple[bool, bool, bool]:
+) -> Dict[str, Any]:
     parsed_tags = set(parsed.get("required_tags", []) or [])
     expected_tags = set(expected.get("required_tags", []) or [])
-    tag_exact = parsed_tags == expected_tags
+    parsed_constraints = _norm_constraints(parsed.get("constraints", []) or [])
+    expected_constraints = _norm_constraints(expected.get("constraints", []) or [])
+    parsed_prefs = _norm_preferences(parsed.get("preferences", []) or [])
+    expected_prefs = _norm_preferences(expected.get("preferences", []) or [])
 
-    constraints_exact = (
-        _norm_constraints(parsed.get("constraints", []) or [])
-        == _norm_constraints(expected.get("constraints", []) or [])
-    )
-    prefs_exact = (
-        _norm_preferences(parsed.get("preferences", []) or [])
-        == _norm_preferences(expected.get("preferences", []) or [])
-    )
-    return tag_exact, constraints_exact, tag_exact and constraints_exact and prefs_exact
+    tag_p, tag_r, tag_f1 = _prf(parsed_tags, expected_tags)
+    con_p, con_r, con_f1 = _prf(parsed_constraints, expected_constraints)
+
+    tag_exact = parsed_tags == expected_tags
+    constraints_exact = parsed_constraints == expected_constraints
+    prefs_exact = parsed_prefs == expected_prefs
+
+    return {
+        "tag_match_exact": tag_exact,
+        "constraint_extraction_exact": constraints_exact,
+        "requirement_extraction_exact": tag_exact and constraints_exact and prefs_exact,
+        "tag_precision": tag_p,
+        "tag_recall": tag_r,
+        "tag_f1": tag_f1,
+        "constraint_precision": con_p,
+        "constraint_recall": con_r,
+        "constraint_f1": con_f1,
+    }
 
 
 def _safe_mean(values: List[float]) -> Optional[float]:
@@ -314,9 +340,10 @@ def analyze(
             parsed = {}
 
         if rec.get("system") == "hybrid_pipeline":
-            tag_exact, constraints_exact, requirement_exact = _requirement_eval(
-                parsed, expected_req
-            )
+            req_eval = _requirement_eval(parsed, expected_req)
+            tag_exact = req_eval["tag_match_exact"]
+            constraints_exact = req_eval["constraint_extraction_exact"]
+            requirement_exact = req_eval["requirement_extraction_exact"]
             context_correct = (
                 str(rec.get("context_action"))
                 == str(gt.get("expected_context_action", "REPLACE"))
@@ -334,6 +361,7 @@ def analyze(
                 or int(rec.get("candidate_count") or 0) == expected_candidates
             )
         else:
+            req_eval = {}
             tag_exact = None
             constraints_exact = None
             requirement_exact = None
@@ -353,6 +381,12 @@ def analyze(
             "tag_match_exact": tag_exact,
             "constraint_extraction_exact": constraints_exact,
             "requirement_extraction_exact": requirement_exact,
+            "tag_precision": req_eval.get("tag_precision"),
+            "tag_recall": req_eval.get("tag_recall"),
+            "tag_f1": req_eval.get("tag_f1"),
+            "constraint_precision": req_eval.get("constraint_precision"),
+            "constraint_recall": req_eval.get("constraint_recall"),
+            "constraint_f1": req_eval.get("constraint_f1"),
             "context_action_correct": context_correct,
             "feasibility_detection_correct": feasibility_correct,
             "candidate_count_correct": candidate_count_correct,
@@ -401,6 +435,18 @@ def analyze(
             ]),
             "full_requirement_exact_rate": _safe_mean([
                 float(bool(r.get("requirement_extraction_exact"))) for r in hybrid
+            ]),
+            "mean_tag_f1": _safe_mean([
+                float(r.get("tag_f1") or 0.0) for r in hybrid
+            ]),
+            "mean_constraint_precision": _safe_mean([
+                float(r.get("constraint_precision") or 0.0) for r in hybrid
+            ]),
+            "mean_constraint_recall": _safe_mean([
+                float(r.get("constraint_recall") or 0.0) for r in hybrid
+            ]),
+            "mean_constraint_f1": _safe_mean([
+                float(r.get("constraint_f1") or 0.0) for r in hybrid
             ]),
             "feasibility_detection_accuracy": _safe_mean([
                 float(bool(r.get("feasibility_detection_correct"))) for r in hybrid
