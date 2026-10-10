@@ -26,6 +26,7 @@ if str(_BACKEND_DIR) not in sys.path:
 from app.baselines.llm_only import recommend_llm_only
 from app.evaluation.logger import EvaluationLogger
 from app.recommendation.pipeline import recommend as recommend_hybrid
+from app.ai.gemini_service import get_last_generation_diagnostics
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -108,6 +109,7 @@ def run_benchmark(
     verbose: bool = True,
     systems: str = "both",
     append: bool = False,
+    baseline_delay_seconds: float = 1.0,
 ) -> List[Dict[str, Any]]:
     queries_data = _load_queries(queries_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +181,13 @@ def run_benchmark(
                 llm_res = recommend_llm_only(query=llm_query)
                 latency = (time.perf_counter() - t0) * 1000.0
                 product_name = llm_res.get("product_name")
+                api_success = bool(llm_res.get("api_success"))
+                if not api_success:
+                    baseline_status = "API_FAILED"
+                elif not product_name:
+                    baseline_status = "PARSE_FAILED"
+                else:
+                    baseline_status = "COMPLETED"
                 record = {
                     **common,
                     "system": "llm_only",
@@ -186,11 +195,14 @@ def run_benchmark(
                     "parsed_requirements": llm_res.get("claimed_specs", {}),
                     "candidate_count": None,
                     "selected_product": product_name,
-                    "status": "COMPLETED" if product_name else "FAILED",
+                    "status": baseline_status,
+                    "api_success": api_success,
+                    "api_attempts": int(llm_res.get("api_attempts", 0) or 0),
+                    "api_model": llm_res.get("api_model"),
                     "hard_constraint_satisfied": None,
                     "has_soft_violation": None,
                     "soft_violation_count": None,
-                    "llm_calls": 1,
+                    "llm_calls": int(llm_res.get("api_attempts", 0) or 0),
                     "input_tokens": None,
                     "output_tokens": None,
                     "total_latency_ms": round(latency, 2),
@@ -221,6 +233,8 @@ def run_benchmark(
                     print(f" ERROR: {exc}")
             logger.log(record)
             all_records.append(record)
+            if baseline_delay_seconds > 0:
+                time.sleep(float(baseline_delay_seconds))
 
         # Hybrid pipeline.
         if run_hybrid:
@@ -237,6 +251,7 @@ def run_benchmark(
                     current_constraints=current_constraints,
                 )
                 latency = (time.perf_counter() - t0) * 1000.0
+                nlu_diag = get_last_generation_diagnostics()
                 opt = hybrid_res.get("optimization", {})
                 reqs = hybrid_res.get("requirements", {})
                 rec_laptop = hybrid_res.get("recommended_laptop")
@@ -249,6 +264,9 @@ def run_benchmark(
                     **common,
                     "system": "hybrid_pipeline",
                     "parser": "gemini_with_regex_fallback",
+                    "nlu_source": "gemini_plus_regex" if nlu_diag.get("success") else "regex_fallback",
+                    "nlu_api_attempts": int(nlu_diag.get("attempts", 0) or 0),
+                    "nlu_api_model": nlu_diag.get("model"),
                     "parsed_requirements": _sanitize_for_json(reqs),
                     "context_action": hybrid_res.get("context_action"),
                     "candidate_count": hybrid_res.get("candidates_count", 0),
@@ -321,6 +339,8 @@ def main() -> None:
         default="both",
     )
     parser.add_argument("--append", action="store_true")
+    parser.add_argument("--baseline-delay", type=float, default=1.0,
+                        help="Seconds to wait after each LLM-only case.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -330,6 +350,7 @@ def main() -> None:
         verbose=not args.quiet,
         systems=args.systems,
         append=args.append,
+        baseline_delay_seconds=args.baseline_delay,
     )
 
 
