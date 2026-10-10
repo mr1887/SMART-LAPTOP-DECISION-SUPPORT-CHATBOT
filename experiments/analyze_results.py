@@ -224,16 +224,29 @@ def _validate_product(
     return product_valid, hard_satisfied, soft_violation
 
 
+def _norm_constraint_value(value: Any) -> str:
+    """Normalize semantically equivalent values before requirement comparison.
+
+    JSON distinguishes 15000000 from 15000000.0 textually even though they are
+    the same numeric constraint. Evaluation must not penalize that formatting.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        if numeric.is_integer():
+            return str(int(numeric))
+        return format(round(numeric, 6), ".6f").rstrip("0").rstrip(".")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
 def _norm_constraints(items: Iterable[Dict[str, Any]]) -> set:
     out = set()
     for con in items or []:
-        value = con.get("value")
-        if isinstance(value, float):
-            value = round(value, 6)
         out.add((
             str(con.get("field")),
             str(con.get("operator")),
-            json.dumps(value, ensure_ascii=False, sort_keys=True),
+            _norm_constraint_value(con.get("value")),
             str(con.get("type", "hard")),
         ))
     return out
