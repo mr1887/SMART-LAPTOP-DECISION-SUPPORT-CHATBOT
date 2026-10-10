@@ -382,12 +382,31 @@ def analyze(
             feasibility_correct = None
             candidate_count_correct = None
 
+        system_name = str(rec.get("system"))
+        status_name = str(rec.get("status"))
+        if system_name == "llm_only":
+            if status_name == "API_FAILED":
+                recommendation_class = "API_FAILED"
+            elif status_name == "PARSE_FAILED":
+                recommendation_class = "PARSE_FAILED"
+            elif status_name == "COMPLETED" and matched is not None:
+                recommendation_class = "CATALOG_VALID"
+            elif status_name == "COMPLETED":
+                recommendation_class = "OUT_OF_CATALOG"
+            else:
+                recommendation_class = status_name or "UNKNOWN"
+        else:
+            recommendation_class = (
+                "CATALOG_VALID" if matched is not None else "OUT_OF_CATALOG"
+            )
+
         evaluated.append({
             **rec,
             "matched_catalog_product": (
                 matched.get("laptop_name") if matched else None
             ),
             "catalog_match_score": match_score,
+            "recommendation_class": recommendation_class,
             "product_valid": product_valid,
             "independent_hard_constraint_satisfied": hard_ok,
             "independent_soft_constraint_violation": soft_violation,
@@ -536,6 +555,23 @@ def analyze(
             for r in soft_group
         ])
 
+        catalog_valid_n = sum(
+            1 for r in completed_group
+            if str(r.get("recommendation_class")) == "CATALOG_VALID"
+        )
+        out_of_catalog_n = sum(
+            1 for r in completed_group
+            if str(r.get("recommendation_class")) == "OUT_OF_CATALOG"
+        )
+        catalog_validity_rate = (
+            round(catalog_valid_n / len(completed_group), 4)
+            if completed_group else None
+        )
+        out_of_catalog_rate = (
+            round(out_of_catalog_n / len(completed_group), 4)
+            if completed_group else None
+        )
+
         summary["rq2_decision_reliability"][system] = {
             "comparison_n": len(attempted_group),
             "completed_recommendation_n": len(completed_group),
@@ -543,9 +579,16 @@ def analyze(
             "api_failure_rate": (round(len(api_failed_group) / len(attempted_group), 4) if attempted_group else None),
             "parse_failure_n": len(parse_failed_group),
             "feasible_case_n": len(feasible_group),
-            "product_validity_rate": valid_rate,
-            "hallucination_rate": (
-                round(1.0 - valid_rate, 4) if valid_rate is not None else None
+            "catalog_valid_n": catalog_valid_n,
+            "catalog_validity_rate": catalog_validity_rate,
+            "out_of_catalog_n": out_of_catalog_n,
+            "out_of_catalog_rate": out_of_catalog_rate,
+            "product_validity_rate": catalog_validity_rate,
+            "verified_hallucination_n": None,
+            "verified_hallucination_rate": None,
+            "hallucination_metric_note": (
+                "OUT_OF_CATALOG is not automatically treated as hallucination. "
+                "True hallucination requires independent external verification."
             ),
             "hard_constraint_satisfaction_rate_on_feasible_cases": hard_rate,
             "hard_constraint_violation_rate_on_feasible_cases": (
