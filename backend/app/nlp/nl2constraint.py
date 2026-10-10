@@ -576,9 +576,33 @@ def convert_legacy_regex_to_requirement_set(legacy_data: dict, text: str = "") -
             "source_text": text or None,
         })
 
+    preferences = []
+
+    # Sở thích ngôn ngữ tự nhiên rõ ràng: dùng làm tie-break/query-match,
+    # không biến thành hard constraint.
+    if text_lower:
+        if any(kw in text_lower for kw in ["giá rẻ", "rẻ hơn", "rẻ nhất", "tiết kiệm"]):
+            preferences.append({
+                "field": "price",
+                "direction": "minimize",
+                "source_text": text or None,
+            })
+        if any(kw in text_lower for kw in ["mỏng nhẹ", "gọn nhẹ", "nhẹ", "dễ mang"]):
+            preferences.append({
+                "field": "weight_kg",
+                "direction": "minimize",
+                "source_text": text or None,
+            })
+        if any(kw in text_lower for kw in ["pin trâu", "pin lâu", "pin tốt", "thời lượng pin"]):
+            preferences.append({
+                "field": "battery_minutes",
+                "direction": "maximize",
+                "source_text": text or None,
+            })
+
     raw_output = {
         "constraints": constraints,
-        "preferences": [],
+        "preferences": preferences,
         "required_tags": legacy_data.get("required_tags", []),
     }
 
@@ -627,6 +651,20 @@ def parse(text: str, use_gemini: bool = True) -> dict:
                         merged_constraints.append(c)
 
                 validated["constraints"] = merged_constraints
+
+                # 3) Preferences deterministic từ câu chữ ("giá rẻ", "mỏng nhẹ",
+                # "pin trâu") được bổ sung nếu Gemini chưa trả field tương ứng.
+                gemini_pref_fields = {
+                    p.get("field")
+                    for p in validated.get("preferences", [])
+                    if isinstance(p, dict) and p.get("field")
+                }
+                merged_preferences = list(validated.get("preferences", []) or [])
+                for p in regex_req.get("preferences", []) or []:
+                    if isinstance(p, dict) and p.get("field") not in gemini_pref_fields:
+                        merged_preferences.append(p)
+                validated["preferences"] = merged_preferences
+
                 return validate_requirement_set(validated).model_dump()
         except Exception:
             pass
