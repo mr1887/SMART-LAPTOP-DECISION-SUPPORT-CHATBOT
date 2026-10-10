@@ -82,3 +82,11 @@ Conclusions must be limited to this catalog, these Vietnamese queries, and the e
 - The runner records the successful Gemini model and the number of API attempts for reproducibility.
 - Hybrid runs record `nlu_source` as `gemini_plus_regex` or `regex_fallback` so RQ1 does not silently attribute fallback behavior to Gemini.
 - Use a delay between baseline cases when necessary to avoid burst rate-limit artifacts; the recommended full-run setting is `--baseline-delay 6` seconds.
+
+
+## Catalog validity vs hallucination
+- A completed recommendation that matches the evaluation catalog is labeled `CATALOG_VALID`.
+- A completed recommendation that does not match the evaluation catalog is labeled `OUT_OF_CATALOG`.
+- `OUT_OF_CATALOG` must **not** be automatically interpreted as hallucination, because a model may recommend a real product that is simply absent from the study catalog.
+- `VERIFIED_HALLUCINATION` requires independent external verification that the product/model is fabricated or materially nonexistent. The automatic evaluator therefore reports verified hallucination as unavailable unless such verification is supplied.
+- RQ2 should primarily report catalog validity, out-of-catalog recommendation rate, hard-constraint satisfaction, and soft-constraint violations. Any hallucination claim must be separately verified and described as such.
