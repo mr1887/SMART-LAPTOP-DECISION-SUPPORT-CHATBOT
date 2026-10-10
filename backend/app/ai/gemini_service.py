@@ -12,6 +12,7 @@ tự động chuyển sang phương án fallback (Regex & Template gốc).
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,18 @@ else:
     load_dotenv(override=True)
 
 _client = None
+_last_generation_diagnostics = {"success": False, "model": None, "attempts": 0, "errors": []}
+
+
+def get_last_generation_diagnostics() -> dict:
+    """Return diagnostics for the most recent Gemini call; never includes secrets."""
+    return {
+        "success": bool(_last_generation_diagnostics.get("success")),
+        "model": _last_generation_diagnostics.get("model"),
+        "attempts": int(_last_generation_diagnostics.get("attempts", 0)),
+        "errors": list(_last_generation_diagnostics.get("errors", [])),
+    }
+
 DEFAULT_MODELS = [
     "gemini-flash-latest",
     "gemini-3.8-flash",
@@ -58,10 +71,19 @@ def _init_gemini():
         return None
 
 
-def _generate_with_fallback(prompt: str, config: Optional[dict] = None) -> Optional[str]:
-    """Gọi API sinh nội dung với cơ chế tự động thử lần lượt các model Gemini hợp lệ."""
+def _generate_with_fallback(
+    prompt: str,
+    config: Optional[dict] = None,
+    retry_rounds: int = 1,
+    retry_delay_seconds: float = 2.0,
+) -> Optional[str]:
+    """Call Gemini with model fallback and optional retry rounds."""
+    global _last_generation_diagnostics
+    _last_generation_diagnostics = {"success": False, "model": None, "attempts": 0, "errors": []}
+
     client = _init_gemini()
     if client is None:
+        _last_generation_diagnostics["errors"].append("Gemini client unavailable or API key missing")
         return None
 
     try:
@@ -70,25 +92,26 @@ def _generate_with_fallback(prompt: str, config: Optional[dict] = None) -> Optio
     except Exception:
         gen_config = None
 
-    for m_name in DEFAULT_MODELS:
-        try:
-            if gen_config:
-                response = client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                    config=gen_config,
-                )
-            else:
-                response = client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                )
-
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            continue
-
+    rounds = max(1, int(retry_rounds or 1))
+    delay = max(0.0, float(retry_delay_seconds or 0.0))
+    for round_idx in range(rounds):
+        for m_name in DEFAULT_MODELS:
+            _last_generation_diagnostics["attempts"] += 1
+            try:
+                if gen_config:
+                    response = client.models.generate_content(model=m_name, contents=prompt, config=gen_config)
+                else:
+                    response = client.models.generate_content(model=m_name, contents=prompt)
+                if response and response.text:
+                    _last_generation_diagnostics["success"] = True
+                    _last_generation_diagnostics["model"] = m_name
+                    return response.text.strip()
+                _last_generation_diagnostics["errors"].append(f"{m_name}: empty response")
+            except Exception as exc:
+                msg = str(exc).replace("\n", " ")[:240]
+                _last_generation_diagnostics["errors"].append(f"{m_name}: {type(exc).__name__}: {msg}")
+        if round_idx < rounds - 1 and delay > 0:
+            time.sleep(delay * (2 ** round_idx))
     return None
 
 
