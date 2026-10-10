@@ -453,6 +453,22 @@ class TestDeterministicNLUAndTagFiltering(unittest.TestCase):
         self.assertTrue(out.empty)
 
 
+class TestDeterministicPreferences(unittest.TestCase):
+    def test_cheap_office_query_adds_price_minimize(self):
+        from app.nlp.nl2constraint import parse
+        out = parse("Tư vấn laptop văn phòng giá rẻ tầm 15tr", use_gemini=False)
+        self.assertIn("is_office_friendly", out["required_tags"])
+        pref = {(p["field"], p["direction"]) for p in out["preferences"]}
+        self.assertIn(("price", "minimize"), pref)
+
+    def test_thin_light_programming_adds_weight_minimize(self):
+        from app.nlp.nl2constraint import parse
+        out = parse("Tìm máy lập trình CNTT mỏng nhẹ tầm 20tr", use_gemini=False)
+        self.assertIn("is_programming_friendly", out["required_tags"])
+        pref = {(p["field"], p["direction"]) for p in out["preferences"]}
+        self.assertIn(("weight_kg", "minimize"), pref)
+
+
 class TestContextActionClassification(unittest.TestCase):
     """Phân biệt ADD / UPDATE / REPLACE trong hội thoại nhiều lượt."""
 
