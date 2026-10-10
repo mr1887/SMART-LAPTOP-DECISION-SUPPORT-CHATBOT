@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any, Dict, Optional
 
-from app.ai.gemini_service import _generate_with_fallback
+from app.ai.gemini_service import _generate_with_fallback, get_last_generation_diagnostics
 
 
 LLM_ONLY_PROMPT_TEMPLATE = """Bạn là chuyên gia tư vấn laptop. Dựa vào yêu cầu của người dùng, hãy đề xuất 1 mẫu laptop phù hợp nhất.
@@ -67,13 +67,19 @@ def recommend_llm_only(
     raw_response = _generate_with_fallback(
         prompt=prompt,
         config={"temperature": 0.2, "response_mime_type": "application/json"},
+        retry_rounds=3,
+        retry_delay_seconds=2.0,
     )
+    diagnostics = get_last_generation_diagnostics()
 
     if not raw_response:
         return {
             "product_name": None,
             "claimed_specs": {},
-            "raw_response": ""
+            "raw_response": "",
+            "api_success": False,
+            "api_attempts": diagnostics.get("attempts", 0),
+            "api_model": diagnostics.get("model"),
         }
 
     # Parse JSON từ response của Gemini
@@ -99,4 +105,7 @@ def recommend_llm_only(
         "product_name": product_name,
         "claimed_specs": claimed_specs,
         "raw_response": raw_response,
+        "api_success": True,
+        "api_attempts": diagnostics.get("attempts", 0),
+        "api_model": diagnostics.get("model"),
     }
