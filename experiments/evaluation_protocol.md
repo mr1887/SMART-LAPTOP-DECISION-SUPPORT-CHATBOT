@@ -73,3 +73,12 @@ The existing baseline is direct LLM-only recommendation. Therefore any product-v
 
 ## Interpretation rule
 Conclusions must be limited to this catalog, these Vietnamese queries, and the evaluated model configuration. Do not claim universal superiority.
+
+
+## API failure handling
+- LLM-only API failures are recorded as `API_FAILED`, not as hallucinations.
+- Responses returned by the API but not parseable into the required JSON/product are recorded as `PARSE_FAILED`.
+- Product validity and hallucination rates are computed only over completed recommendations; API/parse failure rates are reported separately.
+- The runner records the successful Gemini model and the number of API attempts for reproducibility.
+- Hybrid runs record `nlu_source` as `gemini_plus_regex` or `regex_fallback` so RQ1 does not silently attribute fallback behavior to Gemini.
+- Use a delay between baseline cases when necessary to avoid burst rate-limit artifacts; the recommended full-run setting is `--baseline-delay 6` seconds.
