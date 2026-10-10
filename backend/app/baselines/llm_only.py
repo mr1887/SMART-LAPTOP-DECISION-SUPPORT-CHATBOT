@@ -80,6 +80,7 @@ def recommend_llm_only(
             "api_success": False,
             "api_attempts": diagnostics.get("attempts", 0),
             "api_model": diagnostics.get("model"),
+            "api_errors": diagnostics.get("errors", []),
         }
 
     # Parse JSON từ response của Gemini
@@ -108,4 +109,5 @@ def recommend_llm_only(
         "api_success": True,
         "api_attempts": diagnostics.get("attempts", 0),
         "api_model": diagnostics.get("model"),
+        "api_errors": diagnostics.get("errors", []),
     }
