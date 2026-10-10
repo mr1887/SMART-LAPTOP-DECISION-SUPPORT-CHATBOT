@@ -15,10 +15,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import chat, constraints, tts, stt
 
+APP_BUILD_ID = "dataset-aware-2026-10-10-v1"
+
 app = FastAPI(
     title="Laptop Recommendation Chatbot API",
     description="Tư vấn laptop thông minh sử dụng NLP + LightGBM + Google OR-Tools CP-SAT + Gemini Search Grounding + Firestore + Google Cloud STT & TTS",
-    version="1.0.0",
+    version=APP_BUILD_ID,
 )
 
 # ---------- CORS ----------
@@ -39,9 +41,13 @@ app.include_router(stt.router, prefix="/api/stt", tags=["STT"])
 # ---------- Static Web App ----------
 _WEB_DIR = Path(__file__).parents[2] / "frontend" / "web"
 
+@app.on_event("startup")
+def _print_build_id():
+    print(f">>> APP BUILD: {APP_BUILD_ID}", flush=True)
+
 @app.get("/health", tags=["Health"])
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "build": APP_BUILD_ID}
 
 if _WEB_DIR.exists():
     app.mount("/", StaticFiles(directory=_WEB_DIR, html=True), name="static_web")
