@@ -199,6 +199,7 @@ def run_benchmark(
                     "api_success": api_success,
                     "api_attempts": int(llm_res.get("api_attempts", 0) or 0),
                     "api_model": llm_res.get("api_model"),
+                    "api_errors": _sanitize_for_json(llm_res.get("api_errors", [])),
                     "hard_constraint_satisfied": None,
                     "has_soft_violation": None,
                     "soft_violation_count": None,
