@@ -110,8 +110,38 @@ def run_benchmark(
     systems: str = "both",
     append: bool = False,
     baseline_delay_seconds: float = 1.0,
+    batch_number: Optional[int] = None,
+    batch_size: int = 10,
 ) -> List[Dict[str, Any]]:
-    queries_data = _load_queries(queries_file)
+    all_queries = _load_queries(queries_file)
+
+    if batch_number is not None:
+        if batch_number < 1:
+            raise ValueError("--batch-number phải >= 1.")
+        if batch_size < 1:
+            raise ValueError("--batch-size phải >= 1.")
+        start = (batch_number - 1) * batch_size
+        end = min(start + batch_size, len(all_queries))
+        if start >= len(all_queries):
+            raise ValueError(
+                f"Batch {batch_number} vượt quá benchmark {len(all_queries)} query-turns."
+            )
+        queries_data = all_queries[start:end]
+
+        # Do not start a batch in the middle of a multi-turn conversation.
+        first = queries_data[0]
+        if str(first.get("conversation_id", "") or "") and int(first.get("turn_index", 1) or 1) > 1:
+            raise ValueError(
+                "Batch bắt đầu giữa một multi-turn conversation. "
+                "Hãy chọn batch-size để toàn bộ conversation nằm trong cùng batch."
+            )
+
+        # Batch 1 starts a fresh file; later batches append automatically.
+        append = batch_number > 1
+    else:
+        start = 0
+        end = len(all_queries)
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     logger = EvaluationLogger(output_file)
@@ -126,12 +156,21 @@ def run_benchmark(
     baseline_history_by_conversation: Dict[str, List[str]] = {}
 
     if verbose:
-        print(f"=== Benchmark: {len(queries_data)} query-turns ===")
+        if batch_number is None:
+            print(f"=== Benchmark: {len(queries_data)} query-turns ===")
+        else:
+            total_batches = (len(all_queries) + batch_size - 1) // batch_size
+            print(
+                f"=== Benchmark batch {batch_number}/{total_batches}: "
+                f"queries {start + 1}-{end} of {len(all_queries)} ==="
+            )
         print(f"Input : {queries_file}")
         print(f"Output: {output_file}")
-        print(f"Systems: {systems}\n")
+        print(f"Systems: {systems}")
+        print(f"Mode   : {'append' if append else 'fresh'}\n")
 
-    for idx, item in enumerate(queries_data, 1):
+    for local_idx, item in enumerate(queries_data, 1):
+        idx = start + local_idx
         q_id = str(item.get("id", f"Q_{idx:02d}"))
         query_text = str(item.get("query", "")).strip()
         category = str(item.get("category", ""))
@@ -145,7 +184,7 @@ def run_benchmark(
         compare_with_baseline = bool(item.get("compare_with_baseline", True))
 
         if verbose:
-            prefix = f"[{idx}/{len(queries_data)}] {q_id}"
+            prefix = f"[{idx}/{len(all_queries)}] {q_id}"
             if conversation_id:
                 prefix += f" ({conversation_id}, turn {turn_index})"
             print(f"{prefix}: {query_text}")
@@ -339,7 +378,12 @@ def main() -> None:
         choices=["both", "hybrid", "llm_only"],
         default="both",
     )
-    parser.add_argument("--append", action="store_true")
+    parser.add_argument("--append", action="store_true",
+                        help="Append to an existing output file (manual mode only).")
+    parser.add_argument("--batch-number", type=int, default=None,
+                        help="1-based batch number. Example: 1..6 for 60 queries with batch-size 10.")
+    parser.add_argument("--batch-size", type=int, default=10,
+                        help="Number of query-turns per batch (default: 10).")
     parser.add_argument("--baseline-delay", type=float, default=1.0,
                         help="Seconds to wait after each LLM-only case.")
     parser.add_argument("--quiet", action="store_true")
@@ -352,6 +396,8 @@ def main() -> None:
         systems=args.systems,
         append=args.append,
         baseline_delay_seconds=args.baseline_delay,
+        batch_number=args.batch_number,
+        batch_size=args.batch_size,
     )
 
 
