@@ -184,7 +184,13 @@ def run_benchmark(
         compare_with_baseline = bool(item.get("compare_with_baseline", True))
 
         if verbose:
-            prefix = f"[{idx}/{len(all_queries)}] {q_id}"
+            if batch_number is None:
+                prefix = f"[{idx}/{len(all_queries)}] {q_id}"
+            else:
+                prefix = (
+                    f"[batch {local_idx}/{len(queries_data)} | "
+                    f"global {idx}/{len(all_queries)}] {q_id}"
+                )
             if conversation_id:
                 prefix += f" ({conversation_id}, turn {turn_index})"
             print(f"{prefix}: {query_text}")
