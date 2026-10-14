@@ -90,3 +90,26 @@ Conclusions must be limited to this catalog, these Vietnamese queries, and the e
 - `OUT_OF_CATALOG` must **not** be automatically interpreted as hallucination, because a model may recommend a real product that is simply absent from the study catalog.
 - `VERIFIED_HALLUCINATION` requires independent external verification that the product/model is fabricated or materially nonexistent. The automatic evaluator therefore reports verified hallucination as unavailable unless such verification is supplied.
 - RQ2 should primarily report catalog validity, out-of-catalog recommendation rate, hard-constraint satisfaction, and soft-constraint violations. Any hallucination claim must be separately verified and described as such.
+
+
+## RQ2 verification policy (final)
+To avoid conflating catalog coverage with decision correctness:
+
+- `OUT_OF_CATALOG` is **not** counted as a hard-constraint violation and is **not** counted as hallucination.
+- Independent catalog verification is computed only when the recommended product can be mapped to the study catalog.
+- For LLM-only outputs that are outside the catalog, explicit constraints may be assessed from the model's own `claimed_specs`, but this is reported only as **claim-based compliance**. It is not factual verification.
+- Missing fields (for example battery duration when the baseline schema does not provide it) are labeled `UNVERIFIABLE`, not false.
+- Semantic usage tags such as office/programming/gaming/graphics are not inferred from LLM self-claims for independent verification.
+- True hallucination requires independent external verification of product existence or materially false specifications.
+
+The primary RQ2 evidence should therefore separate:
+1. catalog validity / out-of-catalog rate;
+2. catalog-verified satisfaction of hard requirements on catalog-mapped recommendations;
+3. explicit hard/soft constraint compliance with the evidence source clearly labeled (`independent_catalog` vs `llm_self_claimed_specs`);
+4. independently verified hallucination, if external verification is performed.
+
+## RQ3 operational policy (final)
+- Latency must report mean, median, and p95 because API/model fallback can create large outliers.
+- API effort must use actual attempts consistently: `api_attempts` for LLM-only and `nlu_api_attempts` for Hybrid.
+- A logical pipeline call count must not be compared directly against baseline retry attempts.
+- Token/cost conclusions must remain unavailable unless token usage is actually logged.
