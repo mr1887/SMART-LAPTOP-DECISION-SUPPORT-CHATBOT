@@ -224,6 +224,77 @@ def _validate_product(
     return product_valid, hard_satisfied, soft_violation
 
 
+
+def _constraint_ok_claimed_specs(
+    specs: Dict[str, Any],
+    con: Dict[str, Any],
+) -> Optional[bool]:
+    """Evaluate only explicit constraints against LLM self-reported specs.
+
+    This is claim-based evidence, not independent factual verification.
+    Missing fields are UNVERIFIABLE rather than treated as violations.
+    """
+    field = con.get("field")
+    op = con.get("operator")
+    value = con.get("value")
+
+    if field == "price":
+        actual = _f(specs.get("price_vnd"))
+    elif field == "weight_kg":
+        actual = _f(specs.get("weight_kg"))
+    elif field == "battery_minutes":
+        # The baseline schema does not currently request battery duration.
+        actual = _f(specs.get("battery_minutes"))
+    elif field == "gpu_discrete":
+        gpu = specs.get("gpu")
+        if gpu is None:
+            return None
+        actual = _is_discrete_gpu(gpu)
+    elif field == "gpu_keyword":
+        gpu = specs.get("gpu")
+        if gpu is None:
+            return None
+        return all(tok in str(gpu).lower() for tok in str(value).lower().split())
+    else:
+        return None
+
+    if actual is None:
+        return None
+    if op == "<=":
+        return actual <= float(value)
+    if op == ">=":
+        return actual >= float(value)
+    if op == "=":
+        return actual == value
+    return None
+
+
+def _explicit_constraint_status(
+    constraints: List[Dict[str, Any]],
+    checker,
+    constraint_type: str,
+) -> Tuple[str, int, int]:
+    """Return SATISFIED / VIOLATED / UNVERIFIABLE for explicit constraints.
+
+    A known violation is sufficient to label VIOLATED. SATISFIED requires every
+    relevant explicit constraint to be assessable and satisfied.
+    """
+    relevant = [
+        c for c in constraints
+        if str(c.get("type", "hard")) == constraint_type
+    ]
+    if not relevant:
+        return "NOT_APPLICABLE", 0, 0
+
+    checks = [checker(c) for c in relevant]
+    assessable = [x for x in checks if x is not None]
+    if any(x is False for x in assessable):
+        return "VIOLATED", len(assessable), len(relevant)
+    if len(assessable) == len(relevant) and all(x is True for x in assessable):
+        return "SATISFIED", len(assessable), len(relevant)
+    return "UNVERIFIABLE", len(assessable), len(relevant)
+
+
 def _norm_constraint_value(value: Any) -> str:
     """Normalize semantically equivalent values before requirement comparison.
 
@@ -312,6 +383,20 @@ def _safe_median(values: List[float]) -> Optional[float]:
     return round(median(values), 4) if values else None
 
 
+def _safe_percentile(values: List[float], q: float) -> Optional[float]:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 4)
+    pos = (len(ordered) - 1) * q
+    lower = int(pos)
+    upper = min(lower + 1, len(ordered) - 1)
+    frac = pos - lower
+    value = ordered[lower] * (1.0 - frac) + ordered[upper] * frac
+    return round(value, 4)
+
+
 def analyze(
     benchmark_csv: Path,
     results_jsonl: Path,
@@ -346,6 +431,39 @@ def analyze(
         )
         product_valid, hard_ok, soft_violation = _validate_product(
             matched, tags, constraints
+        )
+
+        catalog_hard_status, catalog_hard_assessable_n, catalog_hard_total_n = (
+            _explicit_constraint_status(
+                constraints,
+                lambda con: _constraint_ok(matched, con) if matched is not None else None,
+                "hard",
+            )
+        )
+        catalog_soft_status, catalog_soft_assessable_n, catalog_soft_total_n = (
+            _explicit_constraint_status(
+                constraints,
+                lambda con: _constraint_ok(matched, con) if matched is not None else None,
+                "soft",
+            )
+        )
+
+        claimed_specs = rec.get("parsed_requirements", {})
+        if not isinstance(claimed_specs, dict):
+            claimed_specs = {}
+        claim_hard_status, claim_hard_assessable_n, claim_hard_total_n = (
+            _explicit_constraint_status(
+                constraints,
+                lambda con: _constraint_ok_claimed_specs(claimed_specs, con),
+                "hard",
+            )
+        )
+        claim_soft_status, claim_soft_assessable_n, claim_soft_total_n = (
+            _explicit_constraint_status(
+                constraints,
+                lambda con: _constraint_ok_claimed_specs(claimed_specs, con),
+                "soft",
+            )
         )
 
         parsed = rec.get("parsed_requirements", {})
@@ -410,6 +528,18 @@ def analyze(
             "product_valid": product_valid,
             "independent_hard_constraint_satisfied": hard_ok,
             "independent_soft_constraint_violation": soft_violation,
+            "catalog_explicit_hard_constraint_status": catalog_hard_status,
+            "catalog_explicit_hard_assessable_n": catalog_hard_assessable_n,
+            "catalog_explicit_hard_total_n": catalog_hard_total_n,
+            "catalog_explicit_soft_constraint_status": catalog_soft_status,
+            "catalog_explicit_soft_assessable_n": catalog_soft_assessable_n,
+            "catalog_explicit_soft_total_n": catalog_soft_total_n,
+            "claim_explicit_hard_constraint_status": claim_hard_status,
+            "claim_explicit_hard_assessable_n": claim_hard_assessable_n,
+            "claim_explicit_hard_total_n": claim_hard_total_n,
+            "claim_explicit_soft_constraint_status": claim_soft_status,
+            "claim_explicit_soft_assessable_n": claim_soft_assessable_n,
+            "claim_explicit_soft_total_n": claim_soft_total_n,
             "tag_match_exact": tag_exact,
             "constraint_extraction_exact": constraints_exact,
             "requirement_extraction_exact": requirement_exact,
@@ -546,14 +676,59 @@ def analyze(
         valid_rate = _safe_mean([
             float(bool(r.get("product_valid"))) for r in completed_group
         ])
-        hard_rate = _safe_mean([
+
+        # Independent catalog verification is only meaningful when the selected
+        # product can actually be mapped to the study catalog. Out-of-catalog
+        # recommendations are UNVERIFIABLE, not automatic violations.
+        catalog_verified_feasible = [
+            r for r in feasible_group
+            if str(r.get("recommendation_class")) == "CATALOG_VALID"
+        ]
+        catalog_verified_hard_rate = _safe_mean([
             float(bool(r.get("independent_hard_constraint_satisfied")))
-            for r in feasible_group
+            for r in catalog_verified_feasible
         ])
-        soft_violation_rate = _safe_mean([
-            float(bool(r.get("independent_soft_constraint_violation")))
-            for r in soft_group
-        ])
+
+        explicit_hard_applicable = [
+            r for r in feasible_group
+            if int(r.get("catalog_explicit_hard_total_n") or 0) > 0
+        ]
+        if system == "llm_only":
+            explicit_hard_status_field = "claim_explicit_hard_constraint_status"
+            explicit_soft_status_field = "claim_explicit_soft_constraint_status"
+        else:
+            explicit_hard_status_field = "catalog_explicit_hard_constraint_status"
+            explicit_soft_status_field = "catalog_explicit_soft_constraint_status"
+
+        explicit_hard_assessable = [
+            r for r in explicit_hard_applicable
+            if str(r.get(explicit_hard_status_field)) in {"SATISFIED", "VIOLATED"}
+        ]
+        explicit_hard_satisfied_n = sum(
+            1 for r in explicit_hard_assessable
+            if str(r.get(explicit_hard_status_field)) == "SATISFIED"
+        )
+        explicit_hard_rate = (
+            round(explicit_hard_satisfied_n / len(explicit_hard_assessable), 4)
+            if explicit_hard_assessable else None
+        )
+
+        explicit_soft_applicable = [
+            r for r in soft_group
+            if str(r.get(explicit_soft_status_field)) != "NOT_APPLICABLE"
+        ]
+        explicit_soft_assessable = [
+            r for r in explicit_soft_applicable
+            if str(r.get(explicit_soft_status_field)) in {"SATISFIED", "VIOLATED"}
+        ]
+        explicit_soft_violation_n = sum(
+            1 for r in explicit_soft_assessable
+            if str(r.get(explicit_soft_status_field)) == "VIOLATED"
+        )
+        explicit_soft_violation_rate = (
+            round(explicit_soft_violation_n / len(explicit_soft_assessable), 4)
+            if explicit_soft_assessable else None
+        )
 
         catalog_valid_n = sum(
             1 for r in completed_group
@@ -590,22 +765,60 @@ def analyze(
                 "OUT_OF_CATALOG is not automatically treated as hallucination. "
                 "True hallucination requires independent external verification."
             ),
-            "hard_constraint_satisfaction_rate_on_feasible_cases": hard_rate,
-            "hard_constraint_violation_rate_on_feasible_cases": (
-                round(1.0 - hard_rate, 4) if hard_rate is not None else None
+            "catalog_verified_feasible_n": len(catalog_verified_feasible),
+            "catalog_verified_all_hard_requirements_satisfaction_rate": catalog_verified_hard_rate,
+            "catalog_verification_note": (
+                "This rate is computed only for feasible recommendations that can be "
+                "mapped to the study catalog; out-of-catalog outputs are excluded rather "
+                "than counted as violations."
             ),
-            "soft_constraint_violation_rate": soft_violation_rate,
+            "explicit_hard_constraint_applicable_n": len(explicit_hard_applicable),
+            "explicit_hard_constraint_assessable_n": len(explicit_hard_assessable),
+            "explicit_hard_constraint_unverifiable_n": (
+                len(explicit_hard_applicable) - len(explicit_hard_assessable)
+            ),
+            "explicit_hard_constraint_satisfaction_rate_on_assessable_cases": explicit_hard_rate,
+            "explicit_hard_constraint_evidence": (
+                "llm_self_claimed_specs" if system == "llm_only"
+                else "independent_catalog"
+            ),
+            "explicit_soft_constraint_applicable_n": len(explicit_soft_applicable),
+            "explicit_soft_constraint_assessable_n": len(explicit_soft_assessable),
+            "explicit_soft_constraint_unverifiable_n": (
+                len(explicit_soft_applicable) - len(explicit_soft_assessable)
+            ),
+            "explicit_soft_constraint_violation_rate_on_assessable_cases": explicit_soft_violation_rate,
+            "constraint_metric_note": (
+                "LLM-only out-of-catalog constraint compliance is claim-based, not "
+                "independently verified. Do not present it as factual accuracy."
+                if system == "llm_only"
+                else "Hybrid explicit constraints are independently checked against the catalog."
+            ),
         }
+        api_attempt_values = [
+            float(
+                r.get("api_attempts")
+                if system == "llm_only"
+                else r.get("nlu_api_attempts")
+                or 0
+            )
+            for r in attempted_group
+        ]
         summary["rq3_operational_feasibility"][system] = {
             "n": len(attempted_group),
             "completed_n": len(completed_group),
             "average_latency_ms_all_attempts": _safe_mean(lat),
             "median_latency_ms_all_attempts": _safe_median(lat),
+            "p95_latency_ms_all_attempts": _safe_percentile(lat, 0.95),
             "average_latency_ms_completed": _safe_mean(completed_lat),
             "median_latency_ms_completed": _safe_median(completed_lat),
-            "average_llm_calls": _safe_mean([
-                float(r.get("llm_calls") or 0) for r in attempted_group
-            ]),
+            "p95_latency_ms_completed": _safe_percentile(completed_lat, 0.95),
+            "average_api_attempts": _safe_mean(api_attempt_values),
+            "median_api_attempts": _safe_median(api_attempt_values),
+            "api_attempt_metric_note": (
+                "LLM-only uses api_attempts; Hybrid uses nlu_api_attempts so retries "
+                "and model fallbacks are measured consistently."
+            ),
             "average_input_tokens": _safe_mean([
                 float(r["input_tokens"])
                 for r in attempted_group if r.get("input_tokens") is not None
