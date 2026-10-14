@@ -126,6 +126,55 @@ def _catalog_index(catalog: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, A
     return exact, ordered
 
 
+def _model_identity_tokens(value: Any) -> set:
+    """Extract model-identity tokens conservatively from a product name.
+
+    The goal is to prevent fuzzy matching across different generations/SKUs
+    (e.g. M3 Pro -> M5 Pro, Gen 5 -> Gen 7, 16APH8 -> 16AHP9).
+    Generic size/year/memory tokens are intentionally ignored.
+    """
+    text = _normalize_name(value)
+    if not text:
+        return set()
+
+    tokens = set()
+
+    # Explicit generation markers: "gen 5" -> "gen5".
+    for m in re.finditer(r"\bgen\s*(\d{1,2})\b", text):
+        tokens.add(f"gen{m.group(1)}")
+
+    # Alphanumeric model/SKU tokens containing both letters and digits.
+    for tok in text.split():
+        if not (re.search(r"[a-z]", tok) and re.search(r"\d", tok)):
+            continue
+        # Ignore common capacity/spec tokens that do not define product identity.
+        if re.fullmatch(r"\d+(gb|tb|hz|wh|inch)", tok):
+            continue
+        tokens.add(tok)
+
+    return tokens
+
+
+def _model_identity_compatible(selected: Any, catalog_name: Any) -> bool:
+    """Require model identifiers to agree before accepting fuzzy/substring match.
+
+    If the LLM names a concrete identifier (SKU/generation/model code), the
+    catalog entry must contain the same identifier. This deliberately favors
+    false negatives over false positives for catalog-validity evaluation.
+    """
+    selected_tokens = _model_identity_tokens(selected)
+    catalog_tokens = _model_identity_tokens(catalog_name)
+
+    # When the LLM provides no concrete model identifier, fuzzy matching is too
+    # risky for a scientific catalog-validity metric.
+    if not selected_tokens:
+        return False
+
+    # Every identifier asserted by the LLM must be represented in the catalog
+    # name. This rejects M3->M5, Gen5->Gen7, UX3402ZA->generic family names, etc.
+    return selected_tokens.issubset(catalog_tokens)
+
+
 def _match_product(
     selected: Any,
     exact: Dict[str, Dict[str, Any]],
@@ -140,7 +189,9 @@ def _match_product(
     # Conservative substring match for model suffix/prefix differences.
     substring = [
         row for name, row in ordered
-        if len(norm) >= 8 and (norm in name or name in norm)
+        if len(norm) >= 8
+        and (norm in name or name in norm)
+        and _model_identity_compatible(selected, row.get("laptop_name"))
     ]
     if len(substring) == 1:
         return substring[0], 0.97
@@ -149,7 +200,7 @@ def _match_product(
         (
             (difflib.SequenceMatcher(None, norm, name).ratio(), row)
             for name, row in ordered
-            if name
+            if name and _model_identity_compatible(selected, row.get("laptop_name"))
         ),
         key=lambda x: x[0],
         reverse=True,
