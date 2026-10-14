@@ -113,3 +113,11 @@ The primary RQ2 evidence should therefore separate:
 - API effort must use actual attempts consistently: `api_attempts` for LLM-only and `nlu_api_attempts` for Hybrid.
 - A logical pipeline call count must not be compared directly against baseline retry attempts.
 - Token/cost conclusions must remain unavailable unless token usage is actually logged.
+
+
+## Strict catalog identity matching
+- Exact normalized product-name matches are accepted directly.
+- Substring/fuzzy matches are accepted only when model-identity tokens are compatible.
+- Concrete model identifiers asserted by the LLM (for example Apple M-generation, ThinkPad Gen number, ASUS/Lenovo SKU-like alphanumeric codes) must also appear in the catalog product name.
+- This intentionally prefers false negatives over false positives for catalog-validity measurement.
+- Examples that must **not** be auto-matched: M3 Pro -> M5 Pro, Gen 5 -> Gen 7, 16APH8 -> 16AHP9, or a specific UX3402ZA model -> a generic Zenbook family entry.
