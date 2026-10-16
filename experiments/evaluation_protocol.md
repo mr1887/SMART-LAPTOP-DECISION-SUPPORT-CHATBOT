@@ -121,3 +121,17 @@ The primary RQ2 evidence should therefore separate:
 - Concrete model identifiers asserted by the LLM (for example Apple M-generation, ThinkPad Gen number, ASUS/Lenovo SKU-like alphanumeric codes) must also appear in the catalog product name.
 - This intentionally prefers false negatives over false positives for catalog-validity measurement.
 - Examples that must **not** be auto-matched: M3 Pro -> M5 Pro, Gen 5 -> Gen 7, 16APH8 -> 16AHP9, or a specific UX3402ZA model -> a generic Zenbook family entry.
+
+
+## Full external verification of LLM-only outputs
+The repository now includes `experiments/external_verification_llm_only.csv`, covering all 52 completed LLM-only benchmark outputs.
+
+Labels:
+- `VERIFIED_REAL`: the product/model is supported by an external source.
+- `EXACT_MODEL_NOT_CONFIRMED`: the product family exists, but the exact model/SKU could not be confirmed from the checked sources. This is unresolved and must **not** be counted as hallucination.
+- `NON_PRODUCT_RESPONSE`: the LLM did not recommend a product (for example, it abstained on an infeasible request).
+- `VERIFIED_HALLUCINATION`: reserved for cases where external evidence supports that the named product/model is fabricated or nonexistent.
+- `MATERIAL_SPEC_ERROR`: the product exists, but one or more important self-claimed specifications (e.g. CPU/GPU) conflict with external evidence.
+- `PARTIAL_CHECK_ONLY`, `MODEL_SUFFIX_OMITTED`, and `CONFIG_AMBIGUOUS`: verification was incomplete or configuration-dependent, so these must be interpreted conservatively.
+
+RQ2 must report product-existence hallucination separately from specification errors. Search absence alone is not enough to label a hallucination.
