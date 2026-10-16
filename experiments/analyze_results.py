@@ -454,10 +454,23 @@ def analyze(
     evaluated_csv: Path,
     summary_json: Path,
     catalog_csv: Optional[Path] = None,
+    external_verification_csv: Optional[Path] = None,
 ) -> Dict[str, Any]:
     benchmark = _load_csv(benchmark_csv)
     expected_by_id = {r["query_id"]: r for r in benchmark}
     records = _load_jsonl(results_jsonl)
+
+    verification_path = external_verification_csv
+    if verification_path is None:
+        default_verification = _PROJECT_ROOT / "experiments" / "external_verification_llm_only.csv"
+        verification_path = default_verification if default_verification.exists() else None
+    verification_by_id: Dict[str, Dict[str, str]] = {}
+    if verification_path is not None and verification_path.exists():
+        verification_rows = _load_csv(verification_path)
+        verification_by_id = {
+            str(r.get("query_id")): r for r in verification_rows
+            if str(r.get("query_id") or "").strip()
+        }
 
     catalog_path = catalog_csv or _find_catalog()
     catalog = _load_csv(catalog_path)
@@ -603,6 +616,30 @@ def analyze(
             "context_action_correct": context_correct,
             "feasibility_detection_correct": feasibility_correct,
             "candidate_count_correct": candidate_count_correct,
+            "external_verification_status": (
+                verification_by_id.get(qid, {}).get("verification_status")
+                if system_name == "llm_only" else None
+            ),
+            "external_spec_status": (
+                verification_by_id.get(qid, {}).get("spec_status")
+                if system_name == "llm_only" else None
+            ),
+            "external_verification_confidence": (
+                verification_by_id.get(qid, {}).get("confidence")
+                if system_name == "llm_only" else None
+            ),
+            "external_verification_source_type": (
+                verification_by_id.get(qid, {}).get("source_type")
+                if system_name == "llm_only" else None
+            ),
+            "external_verification_source_url": (
+                verification_by_id.get(qid, {}).get("source_url")
+                if system_name == "llm_only" else None
+            ),
+            "external_verification_note": (
+                verification_by_id.get(qid, {}).get("verification_note")
+                if system_name == "llm_only" else None
+            ),
         })
 
     evaluated_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -846,6 +883,74 @@ def analyze(
                 else "Hybrid explicit constraints are independently checked against the catalog."
             ),
         }
+
+        if system == "llm_only" and verification_by_id:
+            verified_rows = [
+                r for r in completed_group
+                if str(r.get("external_verification_status") or "").strip()
+            ]
+            product_rows = [
+                r for r in verified_rows
+                if str(r.get("external_verification_status")) != "NON_PRODUCT_RESPONSE"
+            ]
+            verified_real = [
+                r for r in product_rows
+                if str(r.get("external_verification_status")) == "VERIFIED_REAL"
+            ]
+            exact_not_confirmed = [
+                r for r in product_rows
+                if str(r.get("external_verification_status")) == "EXACT_MODEL_NOT_CONFIRMED"
+            ]
+            verified_hallucinations = [
+                r for r in product_rows
+                if str(r.get("external_verification_status")) == "VERIFIED_HALLUCINATION"
+            ]
+            material_spec_errors = [
+                r for r in verified_real
+                if str(r.get("external_spec_status")) == "MATERIAL_SPEC_ERROR"
+            ]
+            summary["rq2_decision_reliability"][system]["external_verification"] = {
+                "source_file": str(verification_path) if verification_path else None,
+                "verified_output_n": len(verified_rows),
+                "product_response_n": len(product_rows),
+                "non_product_response_n": len(verified_rows) - len(product_rows),
+                "verified_real_product_n": len(verified_real),
+                "exact_model_not_confirmed_n": len(exact_not_confirmed),
+                "verified_product_hallucination_n": len(verified_hallucinations),
+                "verified_product_hallucination_rate_on_product_responses": (
+                    round(len(verified_hallucinations) / len(product_rows), 4)
+                    if product_rows else None
+                ),
+                "material_spec_error_n": len(material_spec_errors),
+                "material_spec_error_rate_on_verified_real_products": (
+                    round(len(material_spec_errors) / len(verified_real), 4)
+                    if verified_real else None
+                ),
+                "verification_status_counts": {
+                    status: sum(
+                        1 for r in verified_rows
+                        if str(r.get("external_verification_status")) == status
+                    )
+                    for status in sorted({
+                        str(r.get("external_verification_status"))
+                        for r in verified_rows
+                    })
+                },
+                "spec_status_counts": {
+                    status: sum(
+                        1 for r in verified_rows
+                        if str(r.get("external_spec_status")) == status
+                    )
+                    for status in sorted({
+                        str(r.get("external_spec_status"))
+                        for r in verified_rows
+                    })
+                },
+                "note": (
+                    "EXACT_MODEL_NOT_CONFIRMED is unresolved, not hallucination. "
+                    "Material spec errors are counted only among externally VERIFIED_REAL products."
+                ),
+            }
         api_attempt_values = [
             float(
                 r.get("api_attempts")
@@ -903,6 +1008,11 @@ def main() -> None:
         help="Optional processed catalog CSV path.",
     )
     parser.add_argument(
+        "--external-verification",
+        default=None,
+        help="Optional CSV with external verification labels for LLM-only outputs.",
+    )
+    parser.add_argument(
         "--evaluated",
         default=str(_PROJECT_ROOT / "experiments" / "results" / "evaluated_results.csv"),
     )
@@ -918,6 +1028,9 @@ def main() -> None:
         evaluated_csv=Path(args.evaluated),
         summary_json=Path(args.summary),
         catalog_csv=Path(args.catalog) if args.catalog else None,
+        external_verification_csv=(
+            Path(args.external_verification) if args.external_verification else None
+        ),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
