@@ -112,8 +112,19 @@ def run_benchmark(
     baseline_delay_seconds: float = 1.0,
     batch_number: Optional[int] = None,
     batch_size: int = 10,
+    comparison_only: bool = False,
 ) -> List[Dict[str, Any]]:
     all_queries = _load_queries(queries_file)
+
+    # Supplemental RQ3 mode: run only the fixed cases that are directly
+    # comparable between LLM-only and Hybrid. This prevents rerunning the
+    # multi-turn-only cases and keeps the cost experiment separate from the
+    # already-frozen main benchmark.
+    if comparison_only:
+        all_queries = [
+            item for item in all_queries
+            if bool(item.get("compare_with_baseline", True))
+        ]
 
     if batch_number is not None:
         if batch_number < 1:
@@ -167,7 +178,8 @@ def run_benchmark(
         print(f"Input : {queries_file}")
         print(f"Output: {output_file}")
         print(f"Systems: {systems}")
-        print(f"Mode   : {'append' if append else 'fresh'}\n")
+        print(f"Mode   : {'append' if append else 'fresh'}")
+        print(f"Scope  : {'comparison-only' if comparison_only else 'full benchmark'}\n")
 
     for local_idx, item in enumerate(queries_data, 1):
         idx = start + local_idx
@@ -406,6 +418,15 @@ def main() -> None:
                         help="Number of query-turns per batch (default: 10).")
     parser.add_argument("--baseline-delay", type=float, default=1.0,
                         help="Seconds to wait after each LLM-only case.")
+    parser.add_argument(
+        "--comparison-only",
+        action="store_true",
+        help=(
+            "Run only cases with compare_with_baseline=1. Recommended for the "
+            "supplemental RQ3 token/cost experiment so the frozen main results "
+            "are not overwritten or unnecessarily rerun."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -418,6 +439,7 @@ def main() -> None:
         baseline_delay_seconds=args.baseline_delay,
         batch_number=args.batch_number,
         batch_size=args.batch_size,
+        comparison_only=args.comparison_only,
     )
 
 
