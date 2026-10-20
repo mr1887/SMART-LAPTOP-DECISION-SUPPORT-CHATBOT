@@ -55,10 +55,32 @@ Main compliance rates are reported on ground-truth feasible cases.
 The evaluator independently maps the recommended product back to the catalog and re-checks constraints instead of trusting the solver's own status flag.
 
 ## RQ3 metrics
-- Average and median latency.
-- Average LLM calls.
-- Input/output tokens when API metadata is available.
-- Estimated API cost when pricing/token metadata is available.
+- Average, median, and p95 latency.
+- Average API attempts.
+- Input, output, thinking, and total tokens from Gemini `usage_metadata`.
+- Average estimated API cost per query.
+- Total estimated API cost for the benchmark.
+- Cost per completed recommendation.
+- Cost per catalog-valid recommendation.
+
+### API cost calculation
+For each Gemini response:
+
+```
+estimated_cost_usd =
+    input_tokens * input_price_per_1M / 1_000_000
+  + (output_tokens + thinking_tokens) * output_price_per_1M / 1_000_000
+```
+
+The experiment snapshot uses paid-tier standard prices as of **2026-10-20**:
+- `gemini-3.8-flash`: USD 0.75 / 1M input tokens, USD 3.75 / 1M output tokens.
+- `gemini-3.6-flash`: USD 0.75 / 1M input tokens, USD 3.75 / 1M output tokens.
+- `gemini-3.5-flash-lite`: USD 0.30 / 1M input tokens, USD 2.50 / 1M output tokens.
+
+Gemini 3.8/3.6 Flash rates are introductory prices valid through 2026-12-31,
+so the pricing date must be reported with the research results. The built-in
+rates live in `backend/app/evaluation/cost.py` and can be overridden through
+environment variables if the experiment is rerun under a different price schedule.
 
 ## LightGBM
 LightGBM is a learning-based global relevance estimator inside the proposed architecture, not a separate research question.
@@ -112,7 +134,9 @@ The primary RQ2 evidence should therefore separate:
 - Latency must report mean, median, and p95 because API/model fallback can create large outliers.
 - API effort must use actual attempts consistently: `api_attempts` for LLM-only and `nlu_api_attempts` for Hybrid.
 - A logical pipeline call count must not be compared directly against baseline retry attempts.
-- Token/cost conclusions must remain unavailable unless token usage is actually logged.
+- Token/cost conclusions are valid only for runs where Gemini `usage_metadata` is actually logged.
+- Cost values are estimates under the documented paid-tier price snapshot; they are not billing invoices.
+- Thinking tokens are charged with output tokens and are included in estimated output cost.
 
 
 ## Strict catalog identity matching

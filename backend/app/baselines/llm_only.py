@@ -81,6 +81,12 @@ def recommend_llm_only(
             "api_attempts": diagnostics.get("attempts", 0),
             "api_model": diagnostics.get("model"),
             "api_errors": diagnostics.get("errors", []),
+            "input_tokens": diagnostics.get("input_tokens", 0),
+            "output_tokens": diagnostics.get("output_tokens", 0),
+            "thinking_tokens": diagnostics.get("thinking_tokens", 0),
+            "total_tokens": diagnostics.get("total_tokens", 0),
+            "estimated_api_cost_usd": diagnostics.get("estimated_cost_usd", 0.0),
+            "usage_by_model": diagnostics.get("usage_by_model", {}),
         }
 
     # Parse JSON từ response của Gemini
@@ -110,4 +116,10 @@ def recommend_llm_only(
         "api_attempts": diagnostics.get("attempts", 0),
         "api_model": diagnostics.get("model"),
         "api_errors": diagnostics.get("errors", []),
+        "input_tokens": diagnostics.get("input_tokens", 0),
+        "output_tokens": diagnostics.get("output_tokens", 0),
+        "thinking_tokens": diagnostics.get("thinking_tokens", 0),
+        "total_tokens": diagnostics.get("total_tokens", 0),
+        "estimated_api_cost_usd": diagnostics.get("estimated_cost_usd", 0.0),
+        "usage_by_model": diagnostics.get("usage_by_model", {}),
     }

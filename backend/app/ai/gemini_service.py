@@ -18,6 +18,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from app.evaluation.cost import estimate_gemini_cost_usd
+
 # Tự động tìm và nạp file .env từ thư mục gốc dự án
 _ENV_PATH = Path(__file__).parents[3] / ".env"
 if _ENV_PATH.exists():
@@ -26,7 +28,18 @@ else:
     load_dotenv(override=True)
 
 _client = None
-_last_generation_diagnostics = {"success": False, "model": None, "attempts": 0, "errors": []}
+_last_generation_diagnostics = {
+    "success": False,
+    "model": None,
+    "attempts": 0,
+    "errors": [],
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "thinking_tokens": 0,
+    "total_tokens": 0,
+    "estimated_cost_usd": 0.0,
+    "usage_by_model": {},
+}
 
 
 def get_last_generation_diagnostics() -> dict:
@@ -36,7 +49,74 @@ def get_last_generation_diagnostics() -> dict:
         "model": _last_generation_diagnostics.get("model"),
         "attempts": int(_last_generation_diagnostics.get("attempts", 0)),
         "errors": list(_last_generation_diagnostics.get("errors", [])),
+        "input_tokens": int(_last_generation_diagnostics.get("input_tokens", 0) or 0),
+        "output_tokens": int(_last_generation_diagnostics.get("output_tokens", 0) or 0),
+        "thinking_tokens": int(_last_generation_diagnostics.get("thinking_tokens", 0) or 0),
+        "total_tokens": int(_last_generation_diagnostics.get("total_tokens", 0) or 0),
+        "estimated_cost_usd": float(_last_generation_diagnostics.get("estimated_cost_usd", 0.0) or 0.0),
+        "usage_by_model": dict(_last_generation_diagnostics.get("usage_by_model", {}) or {}),
     }
+
+
+def _record_response_usage(response, model_name: str) -> None:
+    """Accumulate token usage and estimated cost from a Gemini response.
+
+    google-genai exposes usage_metadata on successful responses. Field names are
+    accessed defensively so benchmark logging keeps working across SDK versions.
+    """
+    global _last_generation_diagnostics
+
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return
+
+    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+    thinking_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
+    total_tokens = int(
+        getattr(usage, "total_token_count", 0)
+        or (input_tokens + output_tokens + thinking_tokens)
+    )
+
+    estimated_cost = estimate_gemini_cost_usd(
+        model=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
+    )
+
+    _last_generation_diagnostics["input_tokens"] += input_tokens
+    _last_generation_diagnostics["output_tokens"] += output_tokens
+    _last_generation_diagnostics["thinking_tokens"] += thinking_tokens
+    _last_generation_diagnostics["total_tokens"] += total_tokens
+    if estimated_cost is not None:
+        _last_generation_diagnostics["estimated_cost_usd"] += estimated_cost
+
+    by_model = _last_generation_diagnostics.setdefault("usage_by_model", {})
+    model_usage = by_model.setdefault(
+        model_name,
+        {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "thinking_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        },
+    )
+    model_usage["input_tokens"] += input_tokens
+    model_usage["output_tokens"] += output_tokens
+    model_usage["thinking_tokens"] += thinking_tokens
+    model_usage["total_tokens"] += total_tokens
+    if estimated_cost is not None:
+        model_usage["estimated_cost_usd"] = round(
+            float(model_usage["estimated_cost_usd"]) + estimated_cost,
+            10,
+        )
+
+    _last_generation_diagnostics["estimated_cost_usd"] = round(
+        float(_last_generation_diagnostics["estimated_cost_usd"]),
+        10,
+    )
 
 DEFAULT_MODELS = [
     "gemini-3.8-flash",
@@ -77,7 +157,18 @@ def _generate_with_fallback(
 ) -> Optional[str]:
     """Call Gemini with model fallback and optional retry rounds."""
     global _last_generation_diagnostics
-    _last_generation_diagnostics = {"success": False, "model": None, "attempts": 0, "errors": []}
+    _last_generation_diagnostics = {
+        "success": False,
+        "model": None,
+        "attempts": 0,
+        "errors": [],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "thinking_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "usage_by_model": {},
+    }
 
     client = _init_gemini()
     if client is None:
@@ -100,6 +191,8 @@ def _generate_with_fallback(
                     response = client.models.generate_content(model=m_name, contents=prompt, config=gen_config)
                 else:
                     response = client.models.generate_content(model=m_name, contents=prompt)
+                if response is not None:
+                    _record_response_usage(response, m_name)
                 if response and response.text:
                     _last_generation_diagnostics["success"] = True
                     _last_generation_diagnostics["model"] = m_name

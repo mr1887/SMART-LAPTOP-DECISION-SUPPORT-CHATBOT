@@ -107,6 +107,48 @@ def average_tokens(records: List[Union[Dict[str, Any], Any]]) -> Dict[str, float
     }
 
 
+def api_cost_metrics(records: List[Union[Dict[str, Any], Any]]) -> Dict[str, Optional[float]]:
+    """Estimated Gemini API cost metrics in USD.
+
+    Cost is based on token usage recorded from Gemini usage_metadata and the
+    pricing snapshot configured in app.evaluation.cost.
+    """
+    df = _to_df(records)
+    if df.empty or "estimated_api_cost_usd" not in df.columns:
+        return {
+            "avg_api_cost_usd": None,
+            "total_api_cost_usd": None,
+            "cost_per_completed_recommendation_usd": None,
+        }
+
+    costs = pd.to_numeric(df["estimated_api_cost_usd"], errors="coerce").dropna()
+    if costs.empty:
+        return {
+            "avg_api_cost_usd": None,
+            "total_api_cost_usd": None,
+            "cost_per_completed_recommendation_usd": None,
+        }
+
+    total_cost = float(costs.sum())
+    avg_cost = float(costs.mean())
+
+    completed_n = 0
+    if "status" in df.columns:
+        completed_n = int(
+            df["status"].astype(str).isin(
+                {"COMPLETED", "OPTIMAL", "FEASIBLE", "RELAXED"}
+            ).sum()
+        )
+
+    return {
+        "avg_api_cost_usd": round(avg_cost, 8),
+        "total_api_cost_usd": round(total_cost, 8),
+        "cost_per_completed_recommendation_usd": (
+            round(total_cost / completed_n, 8) if completed_n > 0 else None
+        ),
+    }
+
+
 def average_latency(records: List[Union[Dict[str, Any], Any]]) -> Dict[str, float]:
     """Thời gian phản hồi trung bình (ms) tổng thể và theo từng thành phần pipeline."""
     df = _to_df(records)
@@ -137,6 +179,7 @@ def compute_all_metrics(
         return {}
 
     tokens = average_tokens(records)
+    costs = api_cost_metrics(records)
     latencies = average_latency(records)
 
     return {
@@ -148,5 +191,6 @@ def compute_all_metrics(
         "product_hallucination_rate": round(product_hallucination_rate(records, catalog_product_names), 4),
         "average_llm_calls": round(average_llm_calls(records), 2),
         **tokens,
+        **costs,
         **latencies,
     }
