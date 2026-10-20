@@ -24,6 +24,10 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from app.baselines.llm_only import recommend_llm_only
+from app.baselines.catalog_grounded_llm import (
+    build_catalog_summary,
+    recommend_catalog_grounded_llm,
+)
 from app.evaluation.logger import EvaluationLogger
 from app.recommendation.pipeline import recommend as recommend_hybrid
 from app.ai.gemini_service import get_last_generation_diagnostics
@@ -160,8 +164,18 @@ def run_benchmark(
     if not append:
         logger.clear()
 
-    run_llm = systems in {"both", "llm_only"}
-    run_hybrid = systems in {"both", "hybrid"}
+    run_llm = systems in {"both", "all", "llm_only"}
+    run_catalog_llm = systems in {"all", "catalog_grounded_llm"}
+    run_hybrid = systems in {"both", "all", "hybrid"}
+
+    catalog_baseline = None
+    if run_catalog_llm:
+        catalog_baseline = build_catalog_summary()
+        if verbose:
+            print(
+                f"Catalog-grounded baseline: {catalog_baseline['row_count']} products, "
+                f"{len(catalog_baseline['columns'])} compact fields"
+            )
 
     all_records: List[Dict[str, Any]] = []
     hybrid_context_by_conversation: Dict[str, Dict[str, Any]] = {}
@@ -302,6 +316,101 @@ def run_benchmark(
             if baseline_delay_seconds > 0:
                 time.sleep(float(baseline_delay_seconds))
 
+        # Catalog-grounded LLM baseline.
+        # This baseline sees the complete compact study catalog but does not use
+        # LightGBM, retrieval, or OR-Tools. It runs only on comparison cases.
+        if run_catalog_llm and compare_with_baseline:
+            if verbose:
+                print("  -> Catalog-grounded LLM...", end="", flush=True)
+            t0 = time.perf_counter()
+            try:
+                grounded_res = recommend_catalog_grounded_llm(
+                    query=query_text,
+                    catalog_summary=catalog_baseline["text"],
+                )
+                latency = (time.perf_counter() - t0) * 1000.0
+                product_name = grounded_res.get("product_name")
+                api_success = bool(grounded_res.get("api_success"))
+                if not api_success:
+                    grounded_status = "API_FAILED"
+                elif not product_name:
+                    grounded_status = "PARSE_FAILED"
+                else:
+                    grounded_status = "COMPLETED"
+
+                record = {
+                    **common,
+                    "system": "catalog_grounded_llm",
+                    "parser": "none",
+                    "catalog_grounded": True,
+                    "catalog_row_count": int(catalog_baseline["row_count"]),
+                    "catalog_columns": list(catalog_baseline["columns"]),
+                    "parsed_requirements": grounded_res.get("claimed_specs", {}),
+                    "candidate_count": int(catalog_baseline["row_count"]),
+                    "selected_product": product_name,
+                    "status": grounded_status,
+                    "api_success": api_success,
+                    "api_attempts": int(grounded_res.get("api_attempts", 0) or 0),
+                    "api_model": grounded_res.get("api_model"),
+                    "api_errors": _sanitize_for_json(grounded_res.get("api_errors", [])),
+                    "hard_constraint_satisfied": None,
+                    "has_soft_violation": None,
+                    "soft_violation_count": None,
+                    "llm_calls": int(grounded_res.get("api_attempts", 0) or 0),
+                    "input_tokens": int(grounded_res.get("input_tokens", 0) or 0),
+                    "output_tokens": int(grounded_res.get("output_tokens", 0) or 0),
+                    "thinking_tokens": int(grounded_res.get("thinking_tokens", 0) or 0),
+                    "total_tokens": int(grounded_res.get("total_tokens", 0) or 0),
+                    "estimated_api_cost_usd": float(
+                        grounded_res.get("estimated_api_cost_usd", 0.0) or 0.0
+                    ),
+                    "usage_by_model": _sanitize_for_json(
+                        grounded_res.get("usage_by_model", {})
+                    ),
+                    "total_latency_ms": round(latency, 2),
+                    "raw_output": _sanitize_for_json(grounded_res),
+                }
+                if verbose:
+                    print(f" {latency:.1f}ms | {product_name}")
+            except Exception as exc:
+                latency = (time.perf_counter() - t0) * 1000.0
+                record = {
+                    **common,
+                    "system": "catalog_grounded_llm",
+                    "parser": "none",
+                    "catalog_grounded": True,
+                    "catalog_row_count": (
+                        int(catalog_baseline["row_count"]) if catalog_baseline else None
+                    ),
+                    "parsed_requirements": {},
+                    "candidate_count": (
+                        int(catalog_baseline["row_count"]) if catalog_baseline else None
+                    ),
+                    "selected_product": None,
+                    "status": "ERROR",
+                    "api_success": False,
+                    "api_attempts": 0,
+                    "api_model": None,
+                    "api_errors": [str(exc)],
+                    "hard_constraint_satisfied": False,
+                    "has_soft_violation": None,
+                    "soft_violation_count": None,
+                    "llm_calls": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "thinking_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_api_cost_usd": 0.0,
+                    "total_latency_ms": round(latency, 2),
+                    "error": str(exc),
+                }
+                if verbose:
+                    print(f" ERROR: {exc}")
+            logger.log(record)
+            all_records.append(record)
+            if baseline_delay_seconds > 0:
+                time.sleep(float(baseline_delay_seconds))
+
         # Hybrid pipeline.
         if run_hybrid:
             current_constraints: Optional[Dict[str, Any]] = None
@@ -408,7 +517,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--systems",
-        choices=["both", "hybrid", "llm_only"],
+        choices=["both", "all", "hybrid", "llm_only", "catalog_grounded_llm"],
         default="both",
     )
     parser.add_argument("--append", action="store_true",

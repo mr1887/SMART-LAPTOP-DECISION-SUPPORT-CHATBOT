@@ -566,7 +566,7 @@ def analyze(
 
         system_name = str(rec.get("system"))
         status_name = str(rec.get("status"))
-        if system_name == "llm_only":
+        if system_name in {"llm_only", "catalog_grounded_llm"}:
             if status_name == "API_FAILED":
                 recommendation_class = "API_FAILED"
             elif status_name == "PARSE_FAILED":
@@ -732,7 +732,7 @@ def analyze(
 
     for system, group in by_system.items():
         attempted_group = list(group)
-        if system == "llm_only":
+        if system in {"llm_only", "catalog_grounded_llm"}:
             completed_group = [r for r in group if str(r.get("status")) == "COMPLETED"]
             api_failed_group = [r for r in group if str(r.get("status")) == "API_FAILED"]
             parse_failed_group = [r for r in group if str(r.get("status")) == "PARSE_FAILED"]
@@ -880,7 +880,12 @@ def analyze(
                 "LLM-only out-of-catalog constraint compliance is claim-based, not "
                 "independently verified. Do not present it as factual accuracy."
                 if system == "llm_only"
-                else "Hybrid explicit constraints are independently checked against the catalog."
+                else (
+                    "Catalog-grounded LLM constraints are independently checked against "
+                    "the same study catalog."
+                    if system == "catalog_grounded_llm"
+                    else "Hybrid explicit constraints are independently checked against the catalog."
+                )
             ),
         }
 
@@ -954,7 +959,7 @@ def analyze(
         api_attempt_values = [
             float(
                 r.get("api_attempts")
-                if system == "llm_only"
+                if system in {"llm_only", "catalog_grounded_llm"}
                 else r.get("nlu_api_attempts")
                 or 0
             )
@@ -1002,8 +1007,8 @@ def analyze(
             "average_api_attempts": _safe_mean(api_attempt_values),
             "median_api_attempts": _safe_median(api_attempt_values),
             "api_attempt_metric_note": (
-                "LLM-only uses api_attempts; Hybrid uses nlu_api_attempts so retries "
-                "and model fallbacks are measured consistently."
+                "Direct LLM baselines use api_attempts; Hybrid uses nlu_api_attempts "
+                "so retries and model fallbacks are measured consistently."
             ),
             "average_input_tokens": _safe_mean(input_token_values),
             "average_output_tokens": _safe_mean(output_token_values),
