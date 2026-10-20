@@ -960,6 +960,36 @@ def analyze(
             )
             for r in attempted_group
         ]
+        input_token_values = [
+            float(r["input_tokens"])
+            for r in attempted_group if r.get("input_tokens") is not None
+        ]
+        output_token_values = [
+            float(r["output_tokens"])
+            for r in attempted_group if r.get("output_tokens") is not None
+        ]
+        thinking_token_values = [
+            float(r["thinking_tokens"])
+            for r in attempted_group if r.get("thinking_tokens") is not None
+        ]
+        total_token_values = [
+            float(r["total_tokens"])
+            for r in attempted_group if r.get("total_tokens") is not None
+        ]
+        cost_values = [
+            float(r["estimated_api_cost_usd"])
+            for r in attempted_group if r.get("estimated_api_cost_usd") is not None
+        ]
+        total_api_cost = sum(cost_values) if cost_values else None
+        cost_per_completed = (
+            total_api_cost / len(completed_group)
+            if total_api_cost is not None and completed_group else None
+        )
+        cost_per_catalog_valid = (
+            total_api_cost / catalog_valid_n
+            if total_api_cost is not None and catalog_valid_n > 0 else None
+        )
+
         summary["rq3_operational_feasibility"][system] = {
             "n": len(attempted_group),
             "completed_n": len(completed_group),
@@ -975,14 +1005,24 @@ def analyze(
                 "LLM-only uses api_attempts; Hybrid uses nlu_api_attempts so retries "
                 "and model fallbacks are measured consistently."
             ),
-            "average_input_tokens": _safe_mean([
-                float(r["input_tokens"])
-                for r in attempted_group if r.get("input_tokens") is not None
-            ]),
-            "average_output_tokens": _safe_mean([
-                float(r["output_tokens"])
-                for r in attempted_group if r.get("output_tokens") is not None
-            ]),
+            "average_input_tokens": _safe_mean(input_token_values),
+            "average_output_tokens": _safe_mean(output_token_values),
+            "average_thinking_tokens": _safe_mean(thinking_token_values),
+            "average_total_tokens": _safe_mean(total_token_values),
+            "average_estimated_api_cost_usd": _safe_mean(cost_values),
+            "total_estimated_api_cost_usd": (
+                round(total_api_cost, 8) if total_api_cost is not None else None
+            ),
+            "cost_per_completed_recommendation_usd": (
+                round(cost_per_completed, 8) if cost_per_completed is not None else None
+            ),
+            "cost_per_catalog_valid_recommendation_usd": (
+                round(cost_per_catalog_valid, 8) if cost_per_catalog_valid is not None else None
+            ),
+            "cost_metric_note": (
+                "Estimated from Gemini usage_metadata using the pricing snapshot "
+                "documented in app.evaluation.cost. Output cost includes thinking tokens."
+            ),
         }
 
     summary_json.parent.mkdir(parents=True, exist_ok=True)
