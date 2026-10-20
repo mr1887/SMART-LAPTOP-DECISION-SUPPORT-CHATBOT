@@ -82,6 +82,49 @@ so the pricing date must be reported with the research results. The built-in
 rates live in `backend/app/evaluation/cost.py` and can be overridden through
 environment variables if the experiment is rerun under a different price schedule.
 
+## Supplemental RQ3 cost run after the main experiment
+
+If the main benchmark was already completed before token/cost logging was added,
+do **not** overwrite the frozen `results.jsonl`. Run a separate operational-cost
+experiment on the same cases used for the LLM-only vs Hybrid comparison.
+
+Recommended command:
+
+```bash
+python experiments/run_experiment.py \
+  --systems both \
+  --comparison-only \
+  --output experiments/results/cost_rerun.jsonl \
+  --baseline-delay 6
+```
+
+This selects only rows with `compare_with_baseline=1` (52 cases in the current
+benchmark), so both systems are measured on the same fixed queries. It excludes
+the 8 multi-turn turns that are mainly used for RQ1.
+
+If rate limits make one-shot execution inconvenient, run the same 52 cases in
+batches without touching the frozen main results:
+
+```bash
+python experiments/run_experiment.py --systems both --comparison-only --output experiments/results/cost_rerun.jsonl --batch-number 1 --batch-size 10 --baseline-delay 6
+python experiments/run_experiment.py --systems both --comparison-only --output experiments/results/cost_rerun.jsonl --batch-number 2 --batch-size 10 --baseline-delay 6
+# Continue until the final batch.
+```
+
+Then analyze the supplemental run separately:
+
+```bash
+python experiments/analyze_results.py \
+  --results experiments/results/cost_rerun.jsonl \
+  --evaluated experiments/results/cost_rerun_evaluated.csv \
+  --summary experiments/results/cost_rerun_summary.json
+```
+
+For the report, use the original frozen experiment for the primary RQ1/RQ2
+results. Use `cost_rerun_summary.json` only as the supplementary evidence for
+RQ3 token usage, API cost, and operational efficiency. This separation avoids
+retroactively changing the already-completed main experiment.
+
 ## LightGBM
 LightGBM is a learning-based global relevance estimator inside the proposed architecture, not a separate research question.
 
