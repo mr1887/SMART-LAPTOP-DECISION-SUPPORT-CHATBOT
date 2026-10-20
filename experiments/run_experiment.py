@@ -152,6 +152,7 @@ def run_benchmark(
     else:
         start = 0
         end = len(all_queries)
+        queries_data = all_queries
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
