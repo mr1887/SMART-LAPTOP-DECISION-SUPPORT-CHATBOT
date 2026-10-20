@@ -133,8 +133,65 @@ Its role is:
 
 Optional only if time remains: ablation of the full Hybrid system versus Hybrid without LightGBM.
 
+## Catalog-grounded LLM baseline
+
+A third system is included to make the RQ2 comparison fairer:
+
+- **LLM-only:** no study catalog, no symbolic optimizer.
+- **Catalog-grounded LLM:** receives the complete compact study catalog and must
+  choose exactly one catalog product, but uses no LightGBM, retrieval, or OR-Tools.
+- **Hybrid:** catalog-grounded pipeline with structured NLU, scoring/retrieval,
+  and CP-SAT decision logic.
+
+This separates two effects:
+
+1. `LLM-only -> Catalog-grounded LLM`: benefit of grounding the decision to the
+   study product space.
+2. `Catalog-grounded LLM -> Hybrid`: additional benefit of structured symbolic
+   decision-making after both systems have access to the same product catalog.
+
+The grounded prompt contains every catalog row but only decision-relevant fields
+(name/id, price, CPU/GPU, weight, battery, available RAM/storage fields, screen,
+and use-case tags). Internal Hybrid scores such as LightGBM relevance are not
+provided to this baseline.
+
+### Recommended run
+
+Do not rerun the already frozen LLM-only/Hybrid benchmark just to add this
+baseline. Run the 52 comparison cases into a separate file:
+
+```bash
+python experiments/run_experiment.py \
+  --systems catalog_grounded_llm \
+  --comparison-only \
+  --output experiments/results/catalog_grounded_llm.jsonl \
+  --baseline-delay 6
+```
+
+For safer incremental execution:
+
+```bash
+python experiments/run_experiment.py --systems catalog_grounded_llm --comparison-only --output experiments/results/catalog_grounded_llm.jsonl --batch-number 1 --batch-size 10 --baseline-delay 6
+python experiments/run_experiment.py --systems catalog_grounded_llm --comparison-only --output experiments/results/catalog_grounded_llm.jsonl --batch-number 2 --batch-size 10 --baseline-delay 6
+# Continue through batch 6 (the last batch contains 2 cases).
+```
+
+Analyze it independently:
+
+```bash
+python experiments/analyze_results.py \
+  --results experiments/results/catalog_grounded_llm.jsonl \
+  --evaluated experiments/results/catalog_grounded_llm_evaluated.csv \
+  --summary experiments/results/catalog_grounded_llm_summary.json
+```
+
+Use the same RQ2/RQ3 metrics as Hybrid. Because the selected product is expected
+to come from the study catalog, hard/soft constraint compliance is independently
+rechecked against catalog data rather than trusted from the LLM's self-claimed
+specifications.
+
 ## Baseline interpretation
-The existing baseline is direct LLM-only recommendation. Therefore any product-validity advantage of the Hybrid system reflects the complete grounded architecture, not CP-SAT alone. State this explicitly as a limitation; do not attribute every difference causally to the optimizer.
+The direct LLM-only baseline remains useful for measuring the effect of the complete grounded architecture. However, causal claims about the optimizer should rely primarily on the Catalog-grounded LLM vs Hybrid comparison, because both systems operate over the same study catalog. Even then, the Hybrid also includes structured NLU/scoring in addition to CP-SAT, so avoid attributing every difference exclusively to the optimizer.
 
 ## Interpretation rule
 Conclusions must be limited to this catalog, these Vietnamese queries, and the evaluated model configuration. Do not claim universal superiority.
