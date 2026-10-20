@@ -31,6 +31,9 @@ class ExperimentRecord:
     llm_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    thinking_tokens: int = 0
+    total_tokens: int = 0
+    estimated_api_cost_usd: float = 0.0
     nlu_latency_ms: float = 0.0
     scoring_latency_ms: float = 0.0
     optimization_latency_ms: float = 0.0
