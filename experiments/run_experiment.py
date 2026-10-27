@@ -65,6 +65,34 @@ def _bool_field(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
+def _optional_int_field(
+    value: Any,
+    field_name: str,
+    default: Optional[int] = None,
+) -> Optional[int]:
+    """Parse an optional integer from CSV values such as '65', '65.0', or blank."""
+    if value is None:
+        return default
+
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null", "na", "n/a"}:
+        return default
+
+    try:
+        number = float(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Cột '{field_name}' phải là số nguyên hoặc để trống; nhận được {text!r}."
+        ) from exc
+
+    if not number.is_integer():
+        raise ValueError(
+            f"Cột '{field_name}' phải là số nguyên hoặc để trống; nhận được {text!r}."
+        )
+
+    return int(number)
+
+
 def _load_queries(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         raise FileNotFoundError(f"Không tìm thấy benchmark file: {path}")
@@ -84,15 +112,14 @@ def _load_queries(path: Path) -> List[Dict[str, Any]]:
                 "id": row.get("query_id") or f"Q_{idx:02d}",
                 "category": row.get("category", ""),
                 "conversation_id": row.get("conversation_id", ""),
-                "turn_index": int(row.get("turn_index") or 1),
+                "turn_index": _optional_int_field(row.get("turn_index"), "turn_index", default=1),
                 "query": row.get("query", ""),
                 "expected_context_action": row.get("expected_context_action", "REPLACE"),
                 "expected_requirements": expected,
                 "expected_feasible": _bool_field(row.get("expected_feasible"), True),
-                "expected_candidate_count": (
-                    int(row["expected_candidate_count"])
-                    if str(row.get("expected_candidate_count", "")).strip()
-                    else None
+                "expected_candidate_count": _optional_int_field(
+                    row.get("expected_candidate_count"),
+                    "expected_candidate_count",
                 ),
                 "evaluation_scope": row.get("evaluation_scope", "main"),
                 "compare_with_baseline": _bool_field(row.get("compare_with_baseline"), True),
