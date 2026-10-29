@@ -107,9 +107,11 @@ def main() -> None:
         raise ValueError("--output và --merged-output phải là hai file khác nhau.")
     if args.delay < 0:
         raise ValueError("--delay phải >= 0.")
-    if output_path.exists() and not args.overwrite:
+    existing_outputs = [path for path in (output_path, merged_path) if path.exists()]
+    if existing_outputs and not args.overwrite:
+        paths = "\\n".join(str(path) for path in existing_outputs)
         raise FileExistsError(
-            f"File output đã tồn tại: {output_path}\n"
+            f"File output đã tồn tại:\\n{paths}\\n"
             "Hãy chọn tên file khác hoặc thêm --overwrite nếu thực sự muốn ghi đè."
         )
 
