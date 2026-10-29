@@ -68,6 +68,11 @@ def main() -> None:
         help="File JSONL mới để ghi các kết quả retry.",
     )
     parser.add_argument(
+        "--merged-output",
+        default=str(_PROJECT_ROOT / "experiments" / "results" / "results_300_merged.jsonl"),
+        help="JSONL mới chứa kết quả gốc cộng kết quả retry thay thế theo query_id + system.",
+    )
+    parser.add_argument(
         "--delay",
         type=float,
         default=4.0,
@@ -93,9 +98,13 @@ def main() -> None:
     queries_path = Path(args.queries).resolve()
     previous_path = Path(args.previous_results).resolve()
     output_path = Path(args.output).resolve()
+    merged_path = Path(args.merged_output).resolve()
 
-    if queries_path == previous_path or output_path in {queries_path, previous_path}:
-        raise ValueError("Không được dùng chung đường dẫn cho benchmark, kết quả gốc và output retry.")
+    protected_paths = {queries_path, previous_path}
+    if output_path in protected_paths or merged_path in protected_paths:
+        raise ValueError("Không được ghi đè benchmark CSV hoặc kết quả gốc.")
+    if output_path == merged_path:
+        raise ValueError("--output và --merged-output phải là hai file khác nhau.")
     if args.delay < 0:
         raise ValueError("--delay phải >= 0.")
     if output_path.exists() and not args.overwrite:
@@ -240,7 +249,8 @@ def main() -> None:
 
     print("\n=== RETRY SUMMARY ===")
     print(json.dumps(counts, ensure_ascii=False, indent=2))
-    print(f"Retry results saved to: {output_path}")
+    print(f"Retry-only results saved to: {output_path}")
+    print(f"Merged evaluation results saved to: {merged_path}")
     print("Kết quả gốc được giữ nguyên.")
 
 
