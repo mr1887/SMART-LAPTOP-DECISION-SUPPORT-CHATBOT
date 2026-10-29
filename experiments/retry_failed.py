@@ -235,6 +235,28 @@ def main() -> None:
         for record in output_records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    # Build a separate, one-record-per-query/system merged file for evaluation.
+    # Original records stay untouched; retry rows replace only their matching pair.
+    retry_by_pair = {
+        (
+            str(record.get("query_id", record.get("id", ""))).strip(),
+            str(record.get("system", "")).strip(),
+        ): record
+        for record in output_records
+    }
+    merged_records: List[Dict[str, Any]] = []
+    for record in original_records:
+        pair = (
+            str(record.get("query_id", record.get("id", ""))).strip(),
+            str(record.get("system", "")).strip(),
+        )
+        merged_records.append(retry_by_pair.get(pair, record))
+
+    merged_path.parent.mkdir(parents=True, exist_ok=True)
+    with merged_path.open("w", encoding="utf-8") as f:
+        for record in merged_records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
     counts: Dict[str, Dict[str, int]] = {}
     for system in BASELINE_SYSTEMS:
         rows = [r for r in output_records if r.get("system") == system]
